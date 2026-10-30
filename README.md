@@ -43,4 +43,4 @@ pip install python-pptx matplotlib pandas numpy scipy
 ## 兼容性
 
 - 内容（方法论 + `pptx_helpers.py`）为纯文本 + 纯 Python，只依赖 python-pptx / matplotlib / pandas / numpy，不依赖 Hermes 私有 API，可移植到 Claude Code 等遵循 SKILL.md 约定的 agent。
-- macOS / Windows / Linux 均可用（Windows 需将 `pptx_helpers.py` 中 `CN_FONT` 改为 `Microsoft YaHei`）。
+- macOS / Windows / Linux 均可用，中文字体按平台自动检测（也可用环境变量 `PPT_CN_FONT` 覆盖）。

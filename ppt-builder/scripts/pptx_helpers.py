@@ -31,10 +31,39 @@ SLIDE_H = Inches(7.5)
 MARGIN_L = Inches(0.6)
 MARGIN_T = Inches(0.5)
 
-# 中文字体（Windows 用户把 CN_FONT 改成 "Microsoft YaHei"）
-CN_FONT = "PingFang SC"
-CN_FONT_FALLBACKS = ["PingFang SC", "Heiti SC", "Microsoft YaHei",
-                     "SimHei", "Arial Unicode MS", "WenQuanYi Micro Hei"]
+# 中文字体：按平台自动检测（macOS/Windows/Linux），也可用环境变量 PPT_CN_FONT 覆盖
+import platform as _platform
+
+_CN_FONT_BY_PLATFORM = {
+    "Darwin":  ["PingFang SC", "Heiti SC", "STHeiti", "Songti SC"],
+    "Windows": ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"],
+    "Linux":   ["Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+                "Noto Sans CJK", "Droid Sans Fallback"],
+}
+
+
+def _detect_cn_font():
+    """检测当前系统实际可用的中文字体，返回字体名（找不到则回退平台首选）。"""
+    try:
+        from matplotlib import font_manager
+        installed = {f.name for f in font_manager.fontManager.ttflist}
+    except Exception:
+        installed = set()
+    order = _CN_FONT_BY_PLATFORM.get(_platform.system(), [])
+    for name in order:
+        if name in installed:
+            return name
+    return order[0] if order else "PingFang SC"
+
+
+CN_FONT = os.environ.get("PPT_CN_FONT") or _detect_cn_font()
+
+_CN_FONT_FALLBACKS = []
+for _lst in _CN_FONT_BY_PLATFORM.values():
+    for _f in _lst:
+        if _f not in _CN_FONT_FALLBACKS:
+            _CN_FONT_FALLBACKS.append(_f)
+CN_FONT_FALLBACKS = _CN_FONT_FALLBACKS
 
 # ---------------------------------------------------------------- 多套风格
 
@@ -53,7 +82,7 @@ STYLES = {
         bg="#0E1A2B", panel="#1A2A40", primary="#00D4FF", accent="#FF6B35",
         text="#E8EEF5", muted="#8FA3BF", light="#243650", white="#FFFFFF",
         series=["#00D4FF", "#FF6B35", "#7ED321", "#FFD700", "#9B59B6"],
-        font="PingFang SC",
+        font=CN_FONT,
         note="深色底 + 亮青/橙点缀 + 几何网格，适合技术评审/工程攻关",
     ),
     "minimal": dict(
@@ -61,7 +90,7 @@ STYLES = {
         bg="#FFFFFF", panel="#F5F5F3", primary="#111111", accent="#C00000",
         text="#1A1A1A", muted="#8A8A8A", light="#F0F0EE", white="#FFFFFF",
         series=["#444444", "#C00000", "#9A9A9A", "#D6D6D6", "#767676"],
-        font="PingFang SC",
+        font=CN_FONT,
         note="白底大量留白 + 单一红色点缀 + 细线，适合严肃汇报/评审答辩",
     ),
     "editorial": dict(
@@ -69,7 +98,7 @@ STYLES = {
         bg="#FAF7F0", panel="#F0EBE0", primary="#1F3A2D", accent="#C77B3F",
         text="#26221A", muted="#8A8272", light="#EEE8DA", white="#FFFFFF",
         series=["#1F3A2D", "#C77B3F", "#8AA38F", "#D9B98A", "#5C6B63"],
-        font="PingFang SC",
+        font=CN_FONT,
         note="米白底 + 墨绿/陶土色 + 大图主导图文混排，适合有故事性的汇报",
     ),
     "warm": dict(
@@ -77,7 +106,7 @@ STYLES = {
         bg="#FBF7F2", panel="#FFFFFF", primary="#173A5E", accent="#E08A2E",
         text="#2B2B2B", muted="#7A7A7A", light="#F3EADF", white="#FFFFFF",
         series=["#2E75B6", "#E08A2E", "#70AD47", "#C25E5E", "#8B7FC7"],
-        font="PingFang SC",
+        font=CN_FONT,
         note="暖灰底 + 深蓝/琥珀 + 圆角色块卡片，适合管理层/商务汇报",
     ),
 }

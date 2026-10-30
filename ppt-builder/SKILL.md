@@ -202,9 +202,10 @@ pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看�
 代码跑通 ≠ 版面正确。经验上至少藏着 1–3 处「数据逻辑错位」或「标签压字」，
 只有渲染成图才看得见（vision 读图能抓到，纯代码检查抓不到）。
 
-macOS 上最省事的渲染链路（无需装 LibreOffice）：
+按平台选择渲染链路（三平台通用兜底：LibreOffice headless）：
+
+macOS（Keynote 最稳，无需装 LibreOffice）：
 ```bash
-# 1) Keynote 导出 PDF（PowerPoint 的 AppleScript 导出常静默失败，Keynote 更稳）
 osascript -e 'tell application "Keynote"
   activate
   set d to open POSIX file "/abs/path/deck.pptx"
@@ -212,9 +213,28 @@ osascript -e 'tell application "Keynote"
   export d to POSIX file "/abs/path/preview.pdf" as PDF
   close d saving no
 end tell'
-# 2) PDF 逐页转 PNG
+```
+
+Windows（优先 PowerPoint COM，或装 LibreOffice）：
+```powershell
+# 方式一：PowerPoint COM 导出 PDF
+$pp = New-Object -ComObject PowerPoint.Application
+$p = $pp.Presentations.Open("C:\abs\path\deck.pptx", $true, $false, $false)
+$p.SaveAs("C:\abs\path\preview.pdf", 32)   # 32 = ppSaveAsPDF
+$p.Close(); $pp.Quit()
+# 方式二：LibreOffice headless（同 Linux）
+```
+
+Linux / 三平台通用（LibreOffice headless）：
+```bash
+soffice --headless --convert-to pdf --outdir . deck.pptx
+```
+
+之后统一（三平台一致）：
+```bash
+# PDF 逐页转 PNG
 python3 -c "import pymupdf; d=pymupdf.open('preview.pdf'); [p.get_pixmap(dpi=110).save(f'preview/s{i+1:02d}.png') for i,p in enumerate(d)]"
-# 3) 用 vision 工具逐页读图质检（全部页都要看，不要抽样），迭代到无「高」级问题
+# 用 vision 工具逐页读图质检（全部页都要看，不要抽样），迭代到无「高」级问题
 ```
 质检必查：文字溢出/裁切、元素重叠、tofu 方框、图表标签压柱、图例遮挡、页码缺失。
 **同时必须用代码独立复核关键数字**（重读 CSV 重算，再断言 pptx 里的字符串），
