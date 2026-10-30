@@ -1,0 +1,501 @@
+"""
+pptx_helpers.py — 专业 PPT 设计工具库（非固定模板）
+
+设计理念：本库提供「底层能力 + 多套风格 + 装饰元素」，不强制你套用某一种版式。
+你可以用参考版式函数快速起稿，也可以只用底层函数 + STYLES 自己设计布局——
+「长什么样」的决策权在你，用差异化设计体现表达意图。
+
+依赖：python-pptx, matplotlib, numpy, pandas
+用法：
+    import sys; sys.path.insert(0, "<本文件所在目录>")
+    from pptx_helpers import *
+"""
+from __future__ import annotations
+
+import os
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+# ---------------------------------------------------------------- 基础常量
+
+SLIDE_W = Inches(13.333)      # 16:9
+SLIDE_H = Inches(7.5)
+MARGIN_L = Inches(0.6)
+MARGIN_T = Inches(0.5)
+
+# 中文字体（Windows 用户把 CN_FONT 改成 "Microsoft YaHei"）
+CN_FONT = "PingFang SC"
+CN_FONT_FALLBACKS = ["PingFang SC", "Heiti SC", "Microsoft YaHei",
+                     "SimHei", "Arial Unicode MS", "WenQuanYi Micro Hei"]
+
+# ---------------------------------------------------------------- 多套风格
+
+def _c(hexstr):
+    hexstr = hexstr.lstrip("#")
+    return RGBColor(*[int(hexstr[i:i+2], 16) for i in (0, 2, 4)])
+
+
+hexcolor = _c   # 公开别名：hexcolor("#FF6B35") → RGBColor
+
+
+# 每套风格 = 配色 + 字体 + 设计语言。用 get_style(name) 取用。
+STYLES = {
+    "tech": dict(
+        name="科技深色", dark=True,
+        bg="#0E1A2B", panel="#1A2A40", primary="#00D4FF", accent="#FF6B35",
+        text="#E8EEF5", muted="#8FA3BF", light="#243650", white="#FFFFFF",
+        series=["#00D4FF", "#FF6B35", "#7ED321", "#FFD700", "#9B59B6"],
+        font="PingFang SC",
+        note="深色底 + 亮青/橙点缀 + 几何网格，适合技术评审/工程攻关",
+    ),
+    "minimal": dict(
+        name="极简留白", dark=False,
+        bg="#FFFFFF", panel="#F5F5F3", primary="#111111", accent="#C00000",
+        text="#1A1A1A", muted="#8A8A8A", light="#F0F0EE", white="#FFFFFF",
+        series=["#444444", "#C00000", "#9A9A9A", "#D6D6D6", "#767676"],
+        font="PingFang SC",
+        note="白底大量留白 + 单一红色点缀 + 细线，适合严肃汇报/评审答辩",
+    ),
+    "editorial": dict(
+        name="杂志图文", dark=False,
+        bg="#FAF7F0", panel="#F0EBE0", primary="#1F3A2D", accent="#C77B3F",
+        text="#26221A", muted="#8A8272", light="#EEE8DA", white="#FFFFFF",
+        series=["#1F3A2D", "#C77B3F", "#8AA38F", "#D9B98A", "#5C6B63"],
+        font="PingFang SC",
+        note="米白底 + 墨绿/陶土色 + 大图主导图文混排，适合有故事性的汇报",
+    ),
+    "warm": dict(
+        name="暖色商务", dark=False,
+        bg="#FBF7F2", panel="#FFFFFF", primary="#173A5E", accent="#E08A2E",
+        text="#2B2B2B", muted="#7A7A7A", light="#F3EADF", white="#FFFFFF",
+        series=["#2E75B6", "#E08A2E", "#70AD47", "#C25E5E", "#8B7FC7"],
+        font="PingFang SC",
+        note="暖灰底 + 深蓝/琥珀 + 圆角色块卡片，适合管理层/商务汇报",
+    ),
+}
+
+DEFAULT_STYLE = "minimal"
+
+
+def _resolve(s):
+    """把 style dict 里的 hex 颜色解析成 RGBColor（浅拷贝，不改原 STYLES）。"""
+    s = dict(s)
+    for k in ["bg", "panel", "primary", "accent", "text", "muted", "light", "white"]:
+        v = s.get(k)
+        if isinstance(v, str) and v.startswith("#"):
+            s[k] = _c(v)
+    return s
+
+
+def get_style(name=None):
+    """返回风格 dict（含 RGBColor 已解析）。name 为 None 用默认风格。"""
+    return _resolve(STYLES.get(name or DEFAULT_STYLE, STYLES[DEFAULT_STYLE]))
+
+
+def expand_palette(*base_hexes):
+    """从 1~3 个基础色（用户从网站找的 hex）拓展出完整配色方案。
+
+    返回 style dict（RGBColor 已解析），用法同 get_style：
+        st = expand_palette("#2E75B6", "#E08A2E")
+    没传基础色时返回默认风格。"""
+    import colorsys
+
+    def _h2rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def _hsl(h, s, l):
+        r, g, b = colorsys.hls_to_rgb(h % 1.0, l, s)
+        return "#%02X%02X%02X" % (round(r * 255), round(g * 255), round(b * 255))
+
+    bases = [b.strip() for b in base_hexes if b and b.strip()]
+    if not bases:
+        return get_style()
+
+    h0, l0, s0 = colorsys.rgb_to_hls(*_h2rgb(bases[0]))
+    primary = bases[0]
+    accent = bases[1] if len(bases) >= 2 else _hsl(h0 + 0.5, max(s0, 0.7), 0.55)
+
+    series = []
+    seeds = bases if len(bases) >= 2 else [primary]
+    for i in range(5):
+        h = colorsys.rgb_to_hls(*_h2rgb(seeds[i % len(seeds)]))[0]
+        series.append(_hsl(h + i * 0.10, 0.62, 0.52 + (i % 2) * 0.08))
+
+    return _resolve({
+        "name": "自定义配色",
+        "dark": False,
+        "bg": "#FFFFFF",
+        "panel": _hsl(h0, 0.12, 0.97),
+        "primary": primary,
+        "accent": accent,
+        "text": "#262626",
+        "muted": "#7A7A7A",
+        "light": _hsl(h0, 0.32, 0.94),
+        "white": "#FFFFFF",
+        "series": series,
+        "font": CN_FONT,
+        "note": "由用户基础色拓展",
+    })
+
+
+# 兼容旧用法：COLORS 指向默认风格的配色
+COLORS = get_style(DEFAULT_STYLE)
+SERIES_COLORS = [get_style(DEFAULT_STYLE)["series"][0]]  # 旧代码兜底
+
+
+def setup_matplotlib_cn(series=None):
+    """让 matplotlib 正确显示中文 + 负号。series 可传风格系列色。"""
+    plt.rcParams["font.sans-serif"] = CN_FONT_FALLBACKS
+    plt.rcParams["axes.unicode_minus"] = False
+    plt.rcParams["font.size"] = 11
+    if series:
+        plt.rcParams["axes.prop_cycle"] = plt.cycler(color=series)
+
+
+# ---------------------------------------------------------------- 底层工具
+
+def new_deck():
+    prs = Presentation()
+    prs.slide_width = SLIDE_W
+    prs.slide_height = SLIDE_H
+    return prs
+
+
+def blank(prs):
+    return prs.slides.add_slide(prs.slide_layouts[6])
+
+
+def set_bg(slide, color):
+    bg = slide.background
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = color
+
+
+def rect(slide, left, top, width, height, color, round_=False, line=None, radius=0.15):
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE if round_ else MSO_SHAPE.RECTANGLE,
+        left, top, width, height)
+    if round_:
+        try:
+            shp.adjustments[0] = radius
+        except Exception:
+            pass
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = color
+    if line is None:
+        shp.line.fill.background()
+    else:
+        shp.line.color.rgb = line
+        shp.line.width = Pt(1)
+    return shp
+
+
+def line(slide, x1, y1, x2, y2, color, width=1.5):
+    c = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, x1, y1, x2, y2)
+    c.line.color.rgb = color
+    c.line.width = Pt(width)
+    return c
+
+
+def text(slide, left, top, width, height, lines, size=14, bold=False,
+         color=None, align=PP_ALIGN.LEFT, font=None, space_after=6, line_spacing=1.1):
+    """富文本框。lines 是 list[str] 或 list[tuple(text, {size,bold,color,align,font})]。"""
+    tb = slide.shapes.add_textbox(left, top, width, height)
+    tf = tb.text_frame
+    tf.word_wrap = True
+    for i, item in enumerate(lines):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = align
+        p.space_after = Pt(space_after)
+        p.line_spacing = line_spacing
+        if isinstance(item, str):
+            _run(p.add_run(), item, size, bold, color, font or CN_FONT)
+        else:
+            t, kw = item
+            _run(p.add_run(), t,
+                 kw.get("size", size), kw.get("bold", bold),
+                 kw.get("color", color), kw.get("font", font or CN_FONT))
+            p.alignment = kw.get("align", align)
+    return tb
+
+
+def _run(run, t, size, bold, color, font):
+    run.text = t
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.name = font
+    if color is not None:
+        run.font.color.rgb = color
+
+
+def picture(slide, path, left, top, width=None, height=None):
+    kw = {}
+    if width:
+        kw["width"] = width
+    if height:
+        kw["height"] = height
+    return slide.shapes.add_picture(path, left, top, **kw)
+
+
+# ---------------------------------------------------------------- 装饰元素（去模板化关键）
+
+def big_number(slide, left, top, number, label, style, width=Inches(2.6),
+               num_size=44, num_color=None, note=""):
+    """大数字 KPI——视觉焦点，制造『一页一重点』。number 数字、label 标签、note 补充。"""
+    num_color = num_color or style["accent"]
+    text(slide, left, top, width, Inches(0.9),
+         [(str(number), {"size": num_size, "bold": True, "color": num_color})])
+    text(slide, left, top + Inches(0.95), width, Inches(0.4),
+         [(label, {"size": 14, "bold": True, "color": style["primary"]})])
+    if note:
+        text(slide, left, top + Inches(1.35), width, Inches(0.4),
+             [(note, {"size": 10, "color": style["muted"]})])
+    return top + Inches(1.7)
+
+
+def tag(slide, left, top, label, color, text_color=None, height=Inches(0.34)):
+    """圆角小标签/徽章（如『根因』『证据』『对策』）。"""
+    tb = slide.shapes.add_textbox(left, top, Inches(0.2 + 0.5 * len(label)), height)
+    tf = tb.text_frame
+    tf.word_wrap = False
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    _run(p.add_run(), label, 11, True, text_color or RGBColor(0xFF, 0xFF, 0xFF), CN_FONT)
+    # 用圆角矩形做底（先加底再加字，保证字在上层）
+    from pptx.enum.shapes import MSO_SHAPE as _S
+    w = Inches(0.25 + 0.55 * len(label))
+    bg = slide.shapes.add_shape(_S.ROUNDED_RECTANGLE, left, top, w, height)
+    try:
+        bg.adjustments[0] = 0.5
+    except Exception:
+        pass
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = color
+    bg.line.fill.background()
+    # 把文字框移到最上层
+    from pptx.oxml.ns import qn
+    tb._element.getparent().remove(tb._element)
+    bg._element.addnext(tb._element)
+    return left + w
+
+
+def kicker(slide, left, top, label, color):
+    """标题上方的小字 kicker（如『01 · 问题定义』）。"""
+    text(slide, left, top, Inches(6), Inches(0.35),
+         [(label, {"size": 11, "bold": True, "color": color})])
+
+
+def title_bar(slide, title, style, kicker_text=None, page=None):
+    """标准标题：kicker + 主标题 + 一条点缀线。返回正文起始 y。"""
+    top = Inches(0.45)
+    if kicker_text:
+        kicker(slide, MARGIN_L, top, kicker_text, style["accent"])
+        top += Inches(0.38)
+    text(slide, MARGIN_L, top, Inches(12), Inches(0.75),
+         [(title, {"size": 25, "bold": True, "color": style["primary"]})])
+    line(slide, MARGIN_L, top + Inches(0.78), MARGIN_L + Inches(1.2),
+         top + Inches(0.78), style["accent"], 2.5)
+    if page is not None:
+        footer(slide, page, style)
+    return top + Inches(1.05)
+
+
+def footer(slide, page, style, deck_title=""):
+    text(slide, MARGIN_L, SLIDE_H - Inches(0.42), Inches(6), Inches(0.3),
+         [(deck_title, {"size": 9, "color": style["muted"]})])
+    text(slide, SLIDE_W - Inches(1.2), SLIDE_H - Inches(0.42), Inches(0.8), Inches(0.3),
+         [(str(page), {"size": 9, "color": style["muted"]})], align=PP_ALIGN.RIGHT)
+
+
+def flow(slide, steps, top, style, left=Inches(0.6), width=Inches(12.1)):
+    """横向流程条：steps 是 list[str]，自动排成箭头连接的流程。"""
+    n = len(steps)
+    gap = Inches(0.5)
+    box_w = int((width - gap * (n - 1)) / n)
+    x = left
+    for i, s in enumerate(steps):
+        rect(slide, x, top, box_w, Inches(0.7), style["panel"], round_=True)
+        text(slide, x, top + Inches(0.15), box_w, Inches(0.4),
+             [(s, {"size": 13, "bold": True, "color": style["primary"]})],
+             align=PP_ALIGN.CENTER)
+        if i < n - 1:
+            line(slide, x + box_w, top + Inches(0.35), x + box_w + gap,
+                 top + Inches(0.35), style["accent"], 2)
+        x += box_w + gap
+    return top + Inches(0.9)
+
+
+# ---------------------------------------------------------------- 图表（matplotlib，统一中文）
+
+def save_chart(fig, path, dpi=150):
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return path
+
+
+def _style_ax(ax, title="", ylabel="", xlabel="", title_color="#111111"):
+    for s in ["top", "right"]:
+        ax.spines[s].set_visible(False)
+    for s in ["left", "bottom"]:
+        ax.spines[s].set_color("#B0B0B0")
+    ax.grid(axis="y", linestyle="--", alpha=0.35, color="#D9D9D9")
+    ax.set_axisbelow(True)
+    if title:
+        ax.set_title(title, fontsize=13, fontweight="bold", color=title_color, loc="left")
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    return ax
+
+
+def make_bar(labels, values, title="", ylabel="", xlabel="", horizontal=False,
+             figsize=(8.5, 4.6), value_labels=True, highlight_idx=None,
+             colors=None, title_color="#111111"):
+    setup_matplotlib_cn()
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = colors or ["#2E75B6"] * len(labels)
+    if highlight_idx is not None:
+        colors = ["#C9C9C9"] * len(labels)
+        colors[highlight_idx] = "#E66D2C"
+    if horizontal:
+        bars = ax.barh(labels, values, color=colors)
+        ax.invert_yaxis()
+        if value_labels:
+            for b, v in zip(bars, values):
+                ax.text(v, b.get_y() + b.get_height() / 2, f" {v:,.1f}",
+                        va="center", fontsize=10)
+    else:
+        bars = ax.bar(labels, values, color=colors)
+        if value_labels:
+            for b, v in zip(bars, values):
+                ax.text(b.get_x() + b.get_width() / 2, b.get_height(), f"{v:,.1f}",
+                        ha="center", va="bottom", fontsize=10)
+    _style_ax(ax, title, ylabel, xlabel, title_color)
+    fig.tight_layout()
+    return fig
+
+
+def make_line(x, series, title="", ylabel="", xlabel="", labels=None,
+              figsize=(8.5, 4.6), markers=True, colors=None, title_color="#111111"):
+    setup_matplotlib_cn()
+    fig, ax = plt.subplots(figsize=figsize)
+    if labels is None:
+        labels = [None] * len(series)
+    for i, s in enumerate(series):
+        if s and isinstance(s[0], (list, tuple)):
+            xs = [p[0] for p in s]; ys = [p[1] for p in s]
+        else:
+            xs = x; ys = s
+        ax.plot(xs, ys, marker="o" if markers else None, lw=2.2,
+                color=(colors[i] if colors else None),
+                label=labels[i] if labels[i] else None)
+    if any(labels):
+        ax.legend(frameon=False, fontsize=10)
+    _style_ax(ax, title, ylabel, xlabel, title_color)
+    fig.tight_layout()
+    return fig
+
+
+def make_pie(labels, values, title="", figsize=(6.5, 4.6), donut=False,
+             colors=None, title_color="#111111"):
+    setup_matplotlib_cn()
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = colors or plt.rcParams["axes.prop_cycle"].by_key()["color"][:len(labels)]
+    kw = dict(colors=colors, autopct="%1.1f%%", startangle=90, pctdistance=0.75)
+    if donut:
+        kw["wedgeprops"] = {"width": 0.42, "edgecolor": "white"}
+    else:
+        kw["wedgeprops"] = {"edgecolor": "white"}
+    ax.pie(values, labels=labels, **kw)
+    ax.set_title(title, fontsize=13, fontweight="bold", color=title_color, loc="left")
+    fig.tight_layout()
+    return fig
+
+
+def make_heatmap(matrix, row_labels, col_labels, title="", xlabel="", ylabel="",
+                 figsize=(8, 4.6), cmap="YlOrRd", annot=True, fmt=".2f",
+                 title_color="#111111"):
+    """热力图（料×环、料×机等交叉分析必备）。matrix: 二维 list（行×列）。"""
+    setup_matplotlib_cn()
+    fig, ax = plt.subplots(figsize=figsize)
+    mat = np.array(matrix, dtype=float)
+    im = ax.imshow(mat, cmap=cmap, aspect="auto")
+    ax.set_xticks(range(len(col_labels))); ax.set_xticklabels(col_labels)
+    ax.set_yticks(range(len(row_labels))); ax.set_yticklabels(row_labels)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if annot:
+        for i in range(mat.shape[0]):
+            for j in range(mat.shape[1]):
+                ax.text(j, i, format(mat[i, j], fmt), ha="center", va="center",
+                        fontsize=10, color="#222" if mat[i, j] < mat.max() * 0.7 else "#fff")
+    ax.set_title(title, fontsize=13, fontweight="bold", color=title_color, loc="left")
+    fig.colorbar(im, ax=ax, shrink=0.8)
+    fig.tight_layout()
+    return fig
+
+
+def make_scatter(x, y, title="", xlabel="", ylabel="", figsize=(7.5, 4.6),
+                 color="#2E75B6", title_color="#111111"):
+    setup_matplotlib_cn()
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.scatter(x, y, c=color, alpha=0.7, edgecolors="white")
+    _style_ax(ax, title, ylabel, xlabel, title_color)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------- 参考版式（可选，可自定义）
+
+def cover(prs, title, subtitle="", meta="", style=None):
+    """封面（参考实现）。想更出彩可用底层函数自己设计。"""
+    s = get_style(style)
+    sl = blank(prs)
+    set_bg(sl, s["bg"])
+    rect(sl, Inches(0.9), Inches(2.5), Inches(0.22), Inches(2.3), s["accent"])
+    text(sl, Inches(1.35), Inches(2.6), Inches(11), Inches(1.6),
+         [(title, {"size": 40, "bold": True, "color": s["text"]})])
+    metas = []
+    if subtitle:
+        metas.append((subtitle, {"size": 18, "color": s["muted"]}))
+    if meta:
+        metas.append((meta, {"size": 14, "color": s["muted"]}))
+    if metas:
+        text(sl, Inches(1.35), Inches(4.3), Inches(10), Inches(1.5), metas)
+    return sl
+
+
+def section(prs, num, title, style=None, page=None):
+    """章节分隔页。"""
+    s = get_style(style)
+    sl = blank(prs)
+    set_bg(sl, s["bg"] if s.get("dark") else s["light"])
+    big_number(sl, Inches(0.9), Inches(2.6), num, title, s, num_size=54,
+               num_color=s["accent"])
+    if page:
+        footer(sl, page, s)
+    return sl
+
+
+def closing(prs, msg="谢谢", sub="", style=None):
+    s = get_style(style)
+    sl = blank(prs)
+    set_bg(sl, s["bg"] if s.get("dark") else s["primary"])
+    text(sl, Inches(0), Inches(3.0), SLIDE_W, Inches(1.2),
+         [(msg, {"size": 44, "bold": True, "color": s["white"]})], align=PP_ALIGN.CENTER)
+    if sub:
+        text(sl, Inches(0), Inches(4.3), SLIDE_W, Inches(0.5),
+             [(sub, {"size": 16, "color": s["muted"]})], align=PP_ALIGN.CENTER)
+    return sl
