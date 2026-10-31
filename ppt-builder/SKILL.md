@@ -92,6 +92,21 @@ D5 永久对策 → D6 验证 → D7 预防再发 → D8 总结。PPT 可浓缩�
 
 ## 二、图表选型指南
 
+### ⚠️ 实现方式优先级（先读这条）
+
+做图表前先问自己：**这个图能不能用原生图表实现？**
+
+| 图表类型 | 实现方式 | 用什么 |
+|---------|---------|--------|
+| 柱状/条形、折线、饼图/环形、散点 | ✅ **必须用原生** | `native_bar` / `native_line` / `native_pie` / `native_scatter` |
+| 热力图、Weibull 概率图、复杂组合图 | 用图片 | `make_heatmap` / 自定义 matplotlib |
+| 鱼骨图、流程图、层级图 | ✅ **必须用原生形状** | `native_fishbone` / `native_flow` / `native_chevron_flow` / `native_hierarchy` |
+
+**原生图表的价值**：生成的是 PowerPoint 原生对象，用户可在 PPT 内「右键→编辑数据」直接改数字、
+换图表类型、套用 PPT 自带样式。用图片则完全不可编辑，这是明显的质量降级。
+不要因为"用 matplotlib 更熟悉"就默认走图片路径。
+
+
 | 你要表达 | 用这种图 | 说明 |
 |---------|---------|------|
 | 随时间变化 / 趋势 | 折线图 | 突出斜率与拐点 |
@@ -205,6 +220,8 @@ pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看�
 - [ ] 有封面 + 执行摘要/目录 + 建议页
 
 ## 常见坑
+- **别默认用 matplotlib 图片画基础图表**。柱/折/饼/散点一律用 `native_*` 函数——图片无法在 PPT 内编辑，是质量降级。只有热力图、Weibull 概率图这类原生表达不了的才用图片。
+- **字体只用 CN_FONT**，绝不自设字体名。`Hiragino Sans GB`/`STHeiti` 在 Windows 上缺字会导致乱码，helper 已加黑名单拦截，但不要主动使用。
 - python-pptx 默认字体是 Calibri，中文可能渲染异常——务必显式设置 `FONTS` 中的中文字体。
 - 直接往文本框塞超长字符串会溢出，务必控制每行字数或设自动换行。
 - matplotlib 生成 PNG 时注意 `dpi`（建议 ≥150）和 `bbox_inches='tight'`，否则图表发虚。
