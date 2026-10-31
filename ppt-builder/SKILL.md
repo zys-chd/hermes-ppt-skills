@@ -270,7 +270,22 @@ soffice --headless --convert-to pdf --outdir . deck.pptx
 ```bash
 python3 -c "import pymupdf; d=pymupdf.open('preview.pdf'); [p.get_pixmap(dpi=110).save(f'preview/s{i+1:02d}.png') for i,p in enumerate(d)]"
 ```
+> Windows 上 python 命令通常是 `python` 而非 `python3`，路径分隔符用 `\\` 或 `/` 均可；
+> 若没装 pymupdf：`pip install pymupdf`。
+
 必查：文字溢出/裁切、元素重叠、tofu 方框、图表标签压柱、图例遮挡、页码缺失、**配色与主题是否统一**。
+
+### 平台差异速查
+
+| 项目 | macOS | Windows | Linux |
+|------|-------|---------|-------|
+| 中文字体 | PingFang SC | Microsoft YaHei | Noto Sans CJK SC |
+| 字体覆盖 | 环境变量 `PPT_CN_FONT` 可强制指定 | 同左 | 同左 |
+| PPT→PDF | Keynote (osascript) | PowerPoint COM | LibreOffice (soffice) |
+| python 命令 | `python3` | `python` | `python3` |
+
+字体由 `_detect_cn_font()` 自动检测，跨平台兜底时**不会**选其他平台专有字体
+（Windows 上不会回退成 PingFang，Linux 上不会回退成微软雅黑）。
 
 ---
 
@@ -305,3 +320,16 @@ matplotlib / numpy / pandas / scipy），可移植到任何遵循 SKILL.md 约�
 - 把 `CN_FONT` 的平台检测保留（跨平台关键）
 - `verify_native_charts.py` 要一并带上（否则模型可能绕过原生图表要求）
 - 若宿主 agent 的任务描述与本文冲突，**以任务描述为准**，但要主动指出冲突让用户知晓
+
+### 冲突时怎么办（血泪教训）
+
+本 skill 的三条铁律**只在任务没有明确指定时生效**。如果调用方的任务 prompt 里写了相反的
+要求（实测遇到过：prompt 里写着"用 matplotlib 生成 PNG 后插入"，直接推翻铁律 1），模型会
+服从 prompt，这是正确行为——但你作为 agent 应当主动指出这个冲突，而不是默默照做或反复改
+skill 试图压过它。
+
+**改 skill 压不过 prompt。** 如果你发现产出反复不符合 skill 要求，而 skill 已经写清楚了，
+先去**并排读 prompt 和 skill 的原文**确认有无反向指令（排查方法见 `systematic-debugging`
+的"检查更高优先级的指令源"一节）。改了三轮 skill 都没用，问题往往根本不在 skill 里。
+
+同一份 prompt 若有多处副本（本机 + 仓库公开版 + 模板），改一处必须同步全部。

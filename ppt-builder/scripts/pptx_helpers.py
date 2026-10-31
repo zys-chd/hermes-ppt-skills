@@ -35,10 +35,17 @@ MARGIN_T = Inches(0.5)
 import platform as _platform
 
 _CN_FONT_BY_PLATFORM = {
-    "Darwin":  ["PingFang SC", "Heiti SC", "Songti SC", "Hiragino Sans GB"],
+    # 注意：不要放 Hiragino Sans GB / STHeiti —— 它们在 Windows 缺字会乱码
+    "Darwin":  ["PingFang SC", "Heiti SC", "Songti SC"],
     "Windows": ["Microsoft YaHei", "SimHei", "SimSun"],
     "Linux":   ["Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
                 "Noto Sans CJK", "Droid Sans Fallback"],
+}
+# 各平台的兜底字体（matplotlib 检测不到任何已装字体时用）
+_CN_FONT_PLATFORM_FALLBACK = {
+    "Darwin": "PingFang SC",
+    "Windows": "Microsoft YaHei",   # Windows 必有，绝不能回退成 PingFang
+    "Linux": "Noto Sans CJK SC",
 }
 
 # 安全字体白名单：这些字体在中英文 Windows/macOS 下都不会缺字（避免乱码）
@@ -49,18 +56,41 @@ SAFE_CN_FONTS = {"PingFang SC", "Microsoft YaHei", "SimHei", "SimSun",
 UNSAFE_FONTS = {"Hiragino Sans GB", "Hiragino Sans", "STHeiti", "Droid Sans Fallback"}
 
 
+# 各平台专有字体：跨平台兜底时必须排除（这些字体只在特定系统上存在/完整）
+_PLATFORM_EXCLUSIVE = {
+    "Darwin":  {"PingFang SC", "Heiti SC", "Songti SC", "Hiragino Sans GB",
+                "Hiragino Sans", "STHeiti"},
+    "Windows": {"Microsoft YaHei", "SimHei", "SimSun"},
+    "Linux":   {"Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+                "Noto Sans CJK", "Droid Sans Fallback"},
+}
+
+
 def _detect_cn_font():
-    """检测当前系统实际可用的中文字体，返回字体名（找不到则回退平台首选）。"""
+    """检测当前系统实际可用的中文字体，返回字体名（找不到则回退该平台首选字体）。"""
+    sys_name = _platform.system()
+    order = _CN_FONT_BY_PLATFORM.get(sys_name, [])
+    # 其他平台的专有字体集合（本平台以外）
+    foreign = set()
+    for plat, fonts in _PLATFORM_EXCLUSIVE.items():
+        if plat != sys_name:
+            foreign |= fonts
     try:
         from matplotlib import font_manager
         installed = {f.name for f in font_manager.fontManager.ttflist}
     except Exception:
         installed = set()
-    order = _CN_FONT_BY_PLATFORM.get(_platform.system(), [])
+
+    # 1) 本平台候选里找已安装的（首选）
     for name in order:
         if name in installed:
             return name
-    return order[0] if order else "PingFang SC"
+    # 2) 跨平台通用字体兜底（Arial Unicode MS 这类各平台都可能有的），排除其他平台专有字体
+    for name in ("Arial Unicode MS",):
+        if name in installed and name not in foreign:
+            return name
+    # 3) 都找不到 → 用本平台系统必有字体（绝不回退成其他平台的字体）
+    return _CN_FONT_PLATFORM_FALLBACK.get(sys_name, "Arial Unicode MS")
 
 
 CN_FONT = os.environ.get("PPT_CN_FONT") or _detect_cn_font()
