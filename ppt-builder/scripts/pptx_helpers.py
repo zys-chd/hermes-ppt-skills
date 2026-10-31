@@ -378,36 +378,42 @@ def flow(slide, steps, top, style, left=Inches(0.6), width=Inches(12.1)):
 def save_chart(fig, path, dpi=150):
     """保存 matplotlib 图表为 PNG。
 
-    ⚠️ 这是「图片」路线。柱状/折线/饼/散点请改用 native_bar/native_line/native_pie/native_scatter，
-    生成可编辑的原生图表。只有热力图、Weibull 概率图、复杂组合图才应该走这里。
+    ⚠️⚠️ 这是「图片」路线，PPT 里不可编辑。
+    只有这三类应该用它：热力图(make_heatmap)、Weibull 概率图、复杂组合图。
+    柱状/条形/折线/饼/散点 —— 请改用 native_bar / native_line / native_pie / native_scatter。
     """
-    # 只在「基础图表」（柱/折/饼/散点）时警告；热力图、概率图不打扰
+    # 热力图等显式标记允许
     if getattr(fig, "_image_chart_ok", False):
         fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
         plt.close(fig)
         return path
+
+    # 识别基础图表 → 强提示（打到 stdout，模型能看见）
     try:
         axs = [a for a in fig.axes if hasattr(a, "get_ylim")]
-        is_basic = False
-        for a in axs:
-            # 有柱/线/散点集合 → 是基础图表；有 images(热力图) → 放过
-            if getattr(a, "images", None):
-                continue
-            if a.patches or a.lines or getattr(a, "collections", None):
-                is_basic = True
-                break
+        is_basic = any(
+            (a.patches or a.lines or getattr(a, "collections", None))
+            and not getattr(a, "images", None)
+            for a in axs
+        )
         if is_basic:
+            msg = (
+                "\n" + "!" * 70 + "\n"
+                f"!! 警告：正在把基础图表存成图片 -> {path}\n"
+                "!! 柱/折/饼/散点 应该用 native_bar / native_line / native_pie / native_scatter\n"
+                "!! 这些生成 PPT 原生图表，用户可右键编辑数据；图片不可编辑，属质量降级。\n"
+                "!! 只有 热力图 / Weibull概率图 / 复杂组合图 才应该保存为图片。\n"
+                + "!" * 70
+            )
+            print(msg, flush=True)
             import warnings
-            warnings.warn(
-                f"save_chart() 正在保存图片 '{path}'，该图无法在 PowerPoint 内编辑。"
-                "若这是柱/折/饼/散点图，请改用 native_bar/native_line/native_pie/native_scatter。",
-                UserWarning, stacklevel=2)
+            warnings.warn(msg, UserWarning, stacklevel=2)
     except Exception:
         pass
+
     fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return path
-
 
 def _style_ax(ax, title="", ylabel="", xlabel="", title_color="#111111"):
     for s in ["top", "right"]:

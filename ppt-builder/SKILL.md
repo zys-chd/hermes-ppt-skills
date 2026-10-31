@@ -22,7 +22,22 @@ metadata:
 
 ## 🚨 开工前第一件事：图表用什么实现
 
-写任何图表代码前，先看这张表。**不要默认用 matplotlib。**
+**这是本 skill 最容易出错的点，已有实测教训**：即使写了优先级表，模型仍会惯性使用
+matplotlib 图片（实测 7 个数据图全做成图片）。所以执行下面这套**硬流程**，不要凭印象。
+
+**步骤 1 — 列清单**：把要画的所有图列出来，逐个标注类型。
+**步骤 2 — 查表**：按下表决定实现方式，写在注释里。
+**步骤 3 — 编码**：用 native_* 写基础图表。如果你发现自己在写 `make_bar`，停下重写。
+**步骤 4 — 验收（必须执行，不通过不算完成）**：
+```bash
+python3 scripts/verify_native_charts.py <你生成的 deck.pptx>
+```
+这个脚本会检查 pptx 里真实有几个原生图表对象。**原生图表 < 3 个就判定失败**，
+必须改代码重做。不要跳过这一步，也不要自己用"我看图挺像的"来替代。
+
+**为什么必须这么严**：实测中模型会自己写 `def save(fig, name): fig.savefig(...)` 直接存图，
+完全绕过 helper 的任何检查。所以唯一可靠的关卡是事后的 pptx 结构检查——
+数一数 pptx 内部有多少个 chart XML，图片有几个。这是客观事实，绕不过去。
 
 | 要画的东西 | 用什么 | 绝对不能 |
 |-----------|--------|---------|
@@ -39,9 +54,22 @@ metadata:
 
 **为什么必须这样做**：`native_*` 生成的是 PowerPoint 原生图表/形状，用户能右键编辑数据、
 换类型、套 PPT 主题；图片是死的。交付质量差别很大，这是硬要求不是偏好。
+`save_chart()` 已内置运行时警告——如果看到"该图无法在 PowerPoint 内编辑"的警告，说明走错路了。
 
-**验收自检**：生成 pptx 后必须检查——除热力图/Weibull/照片外，不应有任何 matplotlib 图片。
-照片数量应等于任务要求的物证图数量，多出来的图片就是走了错路，必须重做。
+**步骤 4 的验收脚本（复制执行，必须通过）**：
+```python
+import zipfile
+from pptx import Presentation
+prs = Presentation("deck.pptx")
+with zipfile.ZipFile("deck.pptx") as z:
+    n_charts = len([n for n in z.namelist() if "ppt/charts/chart" in n and n.endswith(".xml")])
+pics = sum(1 for s in prs.slides for sh in s.shapes if sh.shape_type == 13)
+photos = 4  # 任务要求的物证图数量
+print(f"原生图表 {n_charts} 个 | 图片 {pics} 张（其中物证照 {photos}）")
+assert n_charts >= 3, "基础图表必须用原生图表，不能用图片"
+assert pics - photos <= 2, f"多出 {pics-photos} 张非物证图片——这些图应改成 native_*"
+```
+不通过就重做，不要交付。
 
 ---
 
@@ -223,6 +251,8 @@ pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看�
 **设计决策权在你**：可以只用底层能力 + 风格自己设计（产生差异），也可以用参考版式快速起稿。
 不要从头手搓每一行 pptx 代码；需要自定义时在底层函数之上组合，不要改图表函数本身。
 
+**原生图表/形状的完整签名与页面配方**见 `references/native-charts-api.md`。
+
 ## 五、推荐工作流程
 
 1. **读数据**：读入 CSV/数据文件，理解字段与量纲。
@@ -245,8 +275,10 @@ pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看�
 - [ ] 有封面 + 执行摘要/目录 + 建议页
 
 ## 常见坑
-- **别默认用 matplotlib 图片画基础图表**。柱/折/饼/散点一律用 `native_*` 函数——图片无法在 PPT 内编辑，是质量降级。只有热力图、Weibull 概率图这类原生表达不了的才用图片。
-- **字体只用 CN_FONT**，绝不自设字体名。`Hiragino Sans GB`/`STHeiti` 在 Windows 上缺字会导致乱码，helper 已加黑名单拦截，但不要主动使用。
+- **别默认用 matplotlib 图片画基础图表**。柱/折/饼/散点一律用 `native_*` 函数——图片无法在 PPT 内编辑，是质量降级。只有热力图、Weibull 概率图这类原生表达不了的才用图片。实测教训：写了优先级表之后模型仍惯性走图片路线，所以必须跑「步骤 4 验收脚本」。
+- **字体只用 CN_FONT**，绝不自设字体名。`Hiragino Sans GB`/`STHeiti` 在 Windows 上缺字会导致乱码（实测 12 份产出中有 4 份用 Hiragino 出现乱码），helper 已加黑名单拦截，但不要主动使用。
+- **修改本 skill 的 helper 后要清 `__pycache__`**，否则模型读到的仍是旧版函数列表，会看不到新加的 native_* 函数。
+- **用脚本批量改 skill 文件时，字符串匹配极易插错位置**（本 skill 曾把警告误插进 `make_heatmap` 和 `cover`）。改完必须 `grep -n` 逐处确认，并跑真实的调用测试，不要只信 `lint: ok`。
 - python-pptx 默认字体是 Calibri，中文可能渲染异常——务必显式设置 `FONTS` 中的中文字体。
 - 直接往文本框塞超长字符串会溢出，务必控制每行字数或设自动换行。
 - matplotlib 生成 PNG 时注意 `dpi`（建议 ≥150）和 `bbox_inches='tight'`，否则图表发虚。
