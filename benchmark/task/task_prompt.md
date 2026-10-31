@@ -45,7 +45,10 @@
    `__OUTPUT_PPTX__`
    （图表 PNG、中间脚本等临时文件也保存在 `__OUTPUT_PPTX__` 所在的同一目录下，不要写入共享目录。）
 7. **硬性要求**：
-   - 至少 **4 类数据图表**：**优先用原生图表**（skill 中的 `native_bar`/`native_line`/`native_pie`/`native_scatter`，数据可在 PPT 内编辑）；原生表达不了的（热力图、Weibull 概率图）用 matplotlib 图片
+   - 至少 **4 类数据图表**：**柱状/条形、折线、饼图、散点必须用原生图表**
+     （`native_bar`/`native_line`/`native_pie`/`native_scatter`，生成后可在 PowerPoint 内右键编辑数据）；
+     **只有热力图、Weibull 概率图等原生表达不了的才用 matplotlib 图片**。
+     验收：生成后运行 `python3 scripts/verify_native_charts.py <deck.pptx>`，原生图表 < 3 个判定不合格。
    - 必须包含：封面、问题定义页、根因分析页、证据展示页、对策与验证页、封底
    - 每页标题必须是一句话结论（例如"根因是 A-2411 批次电容在低温下的早期失效"，而不是"根因分析"）
    - 配色、字体、版式全篇统一
