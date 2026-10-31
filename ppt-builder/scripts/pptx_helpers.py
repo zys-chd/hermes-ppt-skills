@@ -376,6 +376,34 @@ def flow(slide, steps, top, style, left=Inches(0.6), width=Inches(12.1)):
 # ---------------------------------------------------------------- 图表（matplotlib，统一中文）
 
 def save_chart(fig, path, dpi=150):
+    """保存 matplotlib 图表为 PNG。
+
+    ⚠️ 这是「图片」路线。柱状/折线/饼/散点请改用 native_bar/native_line/native_pie/native_scatter，
+    生成可编辑的原生图表。只有热力图、Weibull 概率图、复杂组合图才应该走这里。
+    """
+    # 只在「基础图表」（柱/折/饼/散点）时警告；热力图、概率图不打扰
+    if getattr(fig, "_image_chart_ok", False):
+        fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        return path
+    try:
+        axs = [a for a in fig.axes if hasattr(a, "get_ylim")]
+        is_basic = False
+        for a in axs:
+            # 有柱/线/散点集合 → 是基础图表；有 images(热力图) → 放过
+            if getattr(a, "images", None):
+                continue
+            if a.patches or a.lines or getattr(a, "collections", None):
+                is_basic = True
+                break
+        if is_basic:
+            import warnings
+            warnings.warn(
+                f"save_chart() 正在保存图片 '{path}'，该图无法在 PowerPoint 内编辑。"
+                "若这是柱/折/饼/散点图，请改用 native_bar/native_line/native_pie/native_scatter。",
+                UserWarning, stacklevel=2)
+    except Exception:
+        pass
     fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return path
@@ -464,7 +492,8 @@ def make_pie(labels, values, title="", figsize=(6.5, 4.6), donut=False,
 def make_heatmap(matrix, row_labels, col_labels, title="", xlabel="", ylabel="",
                  figsize=(8, 4.6), cmap="YlOrRd", annot=True, fmt=".2f",
                  title_color="#111111"):
-    """热力图（料×环、料×机等交叉分析必备）。matrix: 二维 list（行×列）。"""
+    """热力图（料×环、料×机等交叉分析必备）。matrix: 二维 list（行×列）。
+    注：热力图无原生图表对应，图片是正确选择，save_chart 不会警告。"""
     setup_matplotlib_cn()
     fig, ax = plt.subplots(figsize=figsize)
     mat = np.array(matrix, dtype=float)
@@ -483,6 +512,7 @@ def make_heatmap(matrix, row_labels, col_labels, title="", xlabel="", ylabel="",
     ax.set_title(title, fontsize=13, fontweight="bold", color=title_color, loc="left")
     fig.colorbar(im, ax=ax, shrink=0.8)
     fig.tight_layout()
+    fig._image_chart_ok = True  # 标记：热力图等允许用图片
     return fig
 
 
