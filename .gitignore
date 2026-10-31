@@ -1,3 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# 评测：不提交凭据、模型清单、产出与工作目录
+benchmark/scripts/models.txt
+benchmark/scripts/*.env
+benchmark/results/

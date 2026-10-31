@@ -1,0 +1,8 @@
+# 待评测模型清单（复制为 models.txt 后使用）
+# 格式: 模型名|provider
+# 例：DeepSeek 官方 API 用 deepseek；阿里云百炼用 alibaba
+#
+# deepseek-v4-pro|deepseek
+# deepseek-v4-flash|deepseek
+# qwen-plus|alibaba
+# qwen-flash|alibaba
