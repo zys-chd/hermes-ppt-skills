@@ -579,45 +579,77 @@ def closing(prs, msg="谢谢", sub="", style=None):
 # ================================================================
 # 原生图表模块（Native Charts）—— 数据可在 PowerPoint 内直接编辑
 # ================================================================
-# 说明：以下函数生成 PowerPoint 原生图表对象（非图片），用户可在 PowerPoint 中
-# 「右键 → 编辑数据」修改数据、换图表类型、应用图表样式。优先使用这些函数；
-# 只有原生图表无法表达时（如热力图、鱼骨图、Weibull 概率图）才用 matplotlib 图片。
+# 这是本库唯一的图表入口。生成 PowerPoint 原生图表对象，用户可右键编辑数据。
+# 配色、字体、网格、数据标签由 _apply_chart_style 统一控制，保证与风格一致。
+# 逐点上色用 paint_points()，不要自己手写 point.format.fill（容易失效）。
 
 from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION
 
 
-def _style_native_chart(chart, style, title="", show_legend=False, legend_pos=None,
-                        data_labels=False, num_format='0.00', gap_width=60,
-                        font_size=11, title_size=14):
-    """统一美化原生图表：字体、配色、网格、数据标签。"""
+def paint_points(chart_or_graphicframe, colors, series_idx=0):
+    """给第 series_idx 个系列的每个数据点分别上色（柱/条/饼最常用）。
+
+    chart_or_graphicframe: native_bar/native_pie 等的返回值（GraphicFrame）或 chart 对象。
+    colors: hex 字符串列表，按数据点顺序循环使用。
+    这是唯一可靠的逐点上色方式——直接操作 point.format.fill，配合 _apply_chart_style 的
+    系列兜底色，保证不会退化成 PowerPoint 主题色。
+    """
+    chart = getattr(chart_or_graphicframe, "chart", chart_or_graphicframe)
+    ser = chart.series[series_idx]
+    n = len(colors)
+    for i, point in enumerate(ser.points):
+        try:
+            point.format.fill.solid()
+            point.format.fill.fore_color.rgb = hexcolor(colors[i % n])
+        except Exception:
+            continue
+    return chart_or_graphicframe
+
+
+def _apply_chart_style(chart, style, title="", show_legend=False, legend_pos=None,
+                       data_labels=True, num_format='0.00', gap_width=60,
+                       font_size=11, title_size=14, colors=None):
+    """统一应用图表样式。所有 native_* 函数内部都调它，保证全篇一致。"""
+    palette = colors or style.get("series", [])
+    text_color = style["text"]
+
+    # 标题
     chart.has_title = bool(title)
     if title:
         tf = chart.chart_title.text_frame
         tf.text = title
-        for p in tf.paragraphs:
-            for r in p.runs:
+        for para in tf.paragraphs:
+            for r in para.runs:
                 r.font.size = Pt(title_size)
                 r.font.bold = True
                 r.font.name = CN_FONT
                 r.font.color.rgb = style["primary"]
 
+    # 图例
     chart.has_legend = show_legend
     if show_legend:
         chart.legend.position = legend_pos or XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
         chart.legend.font.size = Pt(font_size - 1)
         chart.legend.font.name = CN_FONT
+        chart.legend.font.color.rgb = text_color
 
-    # 系列配色
-    series_colors = style.get("series", [])
+    # 每个系列都上色（关键：兜底，防止退化成主题色）
     for i, ser in enumerate(chart.series):
-        if i < len(series_colors):
+        if palette:
             try:
                 ser.format.fill.solid()
-                ser.format.fill.fore_color.rgb = hexcolor(series_colors[i])
+                ser.format.fill.fore_color.rgb = hexcolor(palette[i % len(palette)])
             except Exception:
                 pass
+        # 折线系列需要同时设 line 颜色
+        try:
+            if ser.format.line is not None:
+                ser.format.line.color.rgb = hexcolor(palette[i % len(palette)])
+                ser.format.line.width = Pt(2.25)
+        except Exception:
+            pass
         if data_labels:
             try:
                 ser.data_labels.show_value = True
@@ -625,106 +657,110 @@ def _style_native_chart(chart, style, title="", show_legend=False, legend_pos=No
                 ser.data_labels.number_format_is_linked = False
                 ser.data_labels.font.size = Pt(font_size - 1)
                 ser.data_labels.font.name = CN_FONT
-                ser.data_labels.font.color.rgb = style["text"]
-                ser.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+                ser.data_labels.font.color.rgb = text_color
+                try:
+                    ser.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+                except Exception:
+                    pass
             except Exception:
                 pass
 
     # 坐标轴
+    for axis_attr in ("value_axis", "category_axis"):
+        try:
+            ax = getattr(chart, axis_attr)
+            ax.tick_labels.font.size = Pt(font_size - 1)
+            ax.tick_labels.font.name = CN_FONT
+            ax.tick_labels.font.color.rgb = (style["muted"] if axis_attr == "value_axis"
+                                              else text_color)
+            ax.format.line.color.rgb = hexcolor("#B0B0B0")
+        except Exception:
+            pass
     try:
         va = chart.value_axis
         va.has_major_gridlines = True
         va.major_gridlines.format.line.color.rgb = hexcolor("#D9D9D9")
         va.major_gridlines.format.line.width = Pt(0.75)
-        va.format.line.color.rgb = hexcolor("#B0B0B0")
-        va.tick_labels.font.size = Pt(font_size - 1)
-        va.tick_labels.font.name = CN_FONT
-        va.tick_labels.font.color.rgb = style["muted"]
     except Exception:
         pass
-    try:
-        ca = chart.category_axis
-        ca.tick_labels.font.size = Pt(font_size - 1)
-        ca.tick_labels.font.name = CN_FONT
-        ca.tick_labels.font.color.rgb = style["text"]
-        ca.format.line.color.rgb = hexcolor("#B0B0B0")
-    except Exception:
-        pass
+
+    # 图表区背景透明（融入页面底色）
     try:
         chart.plots[0].gap_width = gap_width
     except Exception:
         pass
+    try:
+        cs = chart.chart_style
+    except Exception:
+        cs = None
     return chart
 
 
-def native_bar(slide, left, top, width, height, categories, series,
-               style, title="", horizontal=False, show_legend=None,
-               data_labels=True, num_format='0.00', colors=None):
-    """原生柱状/条形图。series: dict{系列名: [值...]} 或 list[(名, [值...])]。"""
-    if isinstance(series, dict):
-        series = list(series.items())
+def _as_series(series):
+    return list(series.items()) if isinstance(series, dict) else list(series)
+
+
+def native_bar(slide, left, top, width, height, categories, series, style, title="",
+               horizontal=False, show_legend=None, data_labels=True,
+               num_format='0.00', colors=None, gap_width=60):
+    """原生柱状图/条形图。
+
+    series: {"系列名": [值,...]} 或 [("系列名", [值,...]), ...]
+    colors: 覆盖配色（hex 列表），默认用 style["series"]
+    返回 GraphicFrame；批量上色用 paint_points(返回值, [...]).
+    """
+    pairs = _as_series(series)
     cd = CategoryChartData()
     cd.categories = categories
-    for name, vals in series:
+    for name, vals in pairs:
         cd.add_series(name, vals)
     ctype = XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED
     gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
-    st = dict(style)
-    if colors:
-        st["series"] = colors
-    _style_native_chart(gf.chart, st, title,
-                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
-                        data_labels=data_labels, num_format=num_format)
+    _apply_chart_style(gf.chart, style, title,
+                       show_legend=(len(pairs) > 1) if show_legend is None else show_legend,
+                       data_labels=data_labels, num_format=num_format,
+                       colors=colors, gap_width=gap_width)
     return gf
 
 
-def native_line(slide, left, top, width, height, categories, series,
-                style, title="", markers=True, show_legend=None,
-                data_labels=False, num_format='0.00', colors=None):
-    """原生折线图。"""
-    if isinstance(series, dict):
-        series = list(series.items())
+def native_line(slide, left, top, width, height, categories, series, style, title="",
+                markers=True, show_legend=None, data_labels=False,
+                num_format='0.00', colors=None):
+    """原生折线图。series 同 native_bar。"""
+    pairs = _as_series(series)
     cd = CategoryChartData()
     cd.categories = categories
-    for name, vals in series:
+    for name, vals in pairs:
         cd.add_series(name, vals)
     ctype = XL_CHART_TYPE.LINE_MARKERS if markers else XL_CHART_TYPE.LINE
     gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
-    st = dict(style)
-    if colors:
-        st["series"] = colors
-    _style_native_chart(gf.chart, st, title,
-                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
-                        data_labels=data_labels, num_format=num_format)
-    # 折线加粗
-    for i, ser in enumerate(gf.chart.series):
-        try:
-            ser.format.line.width = Pt(2.25)
-        except Exception:
-            pass
+    _apply_chart_style(gf.chart, style, title,
+                       show_legend=(len(pairs) > 1) if show_legend is None else show_legend,
+                       data_labels=data_labels, num_format=num_format, colors=colors)
     return gf
 
 
-def native_pie(slide, left, top, width, height, categories, values,
-               style, title="", donut=False, data_labels=True, num_format='0.0"%"'):
-    """原生饼图/环形图。"""
+def native_pie(slide, left, top, width, height, categories, values, style, title="",
+               donut=False, data_labels=True, colors=None, show_legend=True):
+    """原生饼图/环形图。逐扇区自动用完整色板。"""
     cd = CategoryChartData()
     cd.categories = categories
     cd.add_series("占比", values)
     ctype = XL_CHART_TYPE.DOUGHNUT if donut else XL_CHART_TYPE.PIE
     gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
     chart = gf.chart
-    _style_native_chart(chart, style, title, show_legend=True,
-                        legend_pos=XL_LEGEND_POSITION.RIGHT)
-    # 逐扇区配色
-    series_colors = style.get("series", [])
-    try:
+    _apply_chart_style(chart, style, title, show_legend=show_legend,
+                       legend_pos=XL_LEGEND_POSITION.RIGHT,
+                       data_labels=False, colors=colors)
+    # 饼图必须逐点上色（否则扇区全是单色）
+    palette = colors or style.get("series", [])
+    if palette:
         for i, point in enumerate(chart.series[0].points):
-            if i < len(series_colors):
+            try:
                 point.format.fill.solid()
-                point.format.fill.fore_color.rgb = hexcolor(series_colors[i])
-    except Exception:
-        pass
+                point.format.fill.fore_color.rgb = hexcolor(palette[i % len(palette)])
+            except Exception:
+                pass
     if data_labels:
         try:
             chart.plots[0].has_data_labels = True
@@ -733,28 +769,25 @@ def native_pie(slide, left, top, width, height, categories, values,
             dl.show_value = False
             dl.font.size = Pt(10)
             dl.font.name = CN_FONT
-            dl.number_format = num_format
-            dl.number_format_is_linked = False
+            dl.font.color.rgb = style["white"]
         except Exception:
             pass
     return gf
 
 
 def native_scatter(slide, left, top, width, height, series, style, title="",
-                   show_legend=None, num_format='0.00'):
-    """原生散点图。series: dict{名: (xs, ys)} 或 list[(名, (xs, ys))]。"""
-    if isinstance(series, dict):
-        series = list(series.items())
+                   show_legend=None, num_format='0.00', colors=None):
+    """原生散点图。series: {"系列名": (xs, ys)} 或 [("名", (xs, ys)), ...]"""
+    pairs = _as_series(series)
     cd = XyChartData()
-    for name, (xs, ys) in series:
+    for name, (xs, ys) in pairs:
         s = cd.add_series(name)
         for x, y in zip(xs, ys):
             s.add_data_point(x, y)
     gf = slide.shapes.add_chart(XL_CHART_TYPE.XY_SCATTER, left, top, width, height, cd)
-    st = dict(style)
-    _style_native_chart(gf.chart, st, title,
-                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
-                        data_labels=False, num_format=num_format)
+    _apply_chart_style(gf.chart, style, title,
+                       show_legend=(len(pairs) > 1) if show_legend is None else show_legend,
+                       data_labels=False, num_format=num_format, colors=colors)
     return gf
 
 

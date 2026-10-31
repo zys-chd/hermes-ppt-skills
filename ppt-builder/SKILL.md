@@ -1,339 +1,307 @@
 ---
 name: ppt-builder
-description: "用 python-pptx 制作专业数据分析汇报 PPT 的完整方法论：叙事结构、图表选型、设计系统、代码模板与质量检查。适用于把数据/分析结论做成 .pptx 文件的任何任务。"
-version: 1.0.0
+description: "用 python-pptx 制作专业汇报 PPT 的方法论与代码工具：叙事结构、问题攻关方法（5W2H/人机料法环/5Why/Weibull/8D）、原生图表、多风格设计系统、跨平台字体、质量验收。适用于把数据或分析结论做成真实 .pptx 文件的任务。"
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [ppt, powerpoint, presentation, data-storytelling, python-pptx, visualization]
+    tags: [ppt, powerpoint, presentation, python-pptx, data-storytelling, reliability-engineering, native-charts]
 ---
 
-# PPT Builder — 数据分析汇报演示文稿制作
+# PPT Builder v2 — 专业汇报演示文稿制作
 
-本 skill 指导你用 python-pptx 制作**专业、美观、结论清晰**的数据分析汇报 PPT。
-它提供原则、方法和可复用代码工具，但**不规定每一页的具体内容**——洞察深度、视觉创意和叙事质量由你发挥。
+用 python-pptx 制作**专业、可编辑、结论清晰**的 PPT。
 
-## 什么时候用
-- 用户要"做一份 PPT / 汇报 / 演示文稿"，且产出必须是真实 .pptx 文件
-- 需要把一份数据或分析结论组织成面向管理层/客户的汇报
-- 任何需要"数据 + 图表 + 设计"三合一的演示任务
+**本 skill 的定位**：提供方法论 + 一套带强约束的设计系统（`scripts/pptx_helpers.py`）。
+不规定每页内容，但**在关键处（图表实现、字体、配色）有硬性约束**——因为这些地方
+实测中极易出错，且错误会显著降低交付质量。
 
-## 🚨 开工前第一件事：图表用什么实现
+---
 
-**这是本 skill 最容易出错的点，已有实测教训**：即使写了优先级表，模型仍会惯性使用
-matplotlib 图片（实测 7 个数据图全做成图片）。所以执行下面这套**硬流程**，不要凭印象。
+## ⚠️ 三条铁律（开工前必读）
 
-**步骤 1 — 列清单**：把要画的所有图列出来，逐个标注类型。
-**步骤 2 — 查表**：按下表决定实现方式，写在注释里。
-**步骤 3 — 编码**：用 native_* 写基础图表。如果你发现自己在写 `make_bar`，停下重写。
-**步骤 4 — 验收（必须执行，不通过不算完成）**：
+这三条是实战中反复踩坑总结的，违反任何一条都会导致交付不合格。
+
+### 铁律 1：基础图表必须用原生图表，不用图片
+
+| 要画的东西 | 必须用 | 禁止 |
+|-----------|--------|------|
+| 柱状图 / 条形图 | `native_bar(...)` | ❌ matplotlib 存图片 |
+| 折线图 | `native_line(...)` | ❌ matplotlib 存图片 |
+| 饼图 / 环形图 | `native_pie(...)` | ❌ matplotlib 存图片 |
+| 散点图 | `native_scatter(...)` | ❌ matplotlib 存图片 |
+| 流程图 / 步骤条 | `native_flow` / `native_chevron_flow` | ❌ 图片 |
+| 层级图 / 组织图 | `native_hierarchy(...)` | ❌ 图片 |
+| 鱼骨图 / 因果图 | `native_fishbone(...)` | ❌ 图片 |
+| 热力图 | `make_heatmap(...)` + 图片 | ✅ 只能图片 |
+| Weibull 概率图 / 复杂组合图 | matplotlib + 图片 | ✅ 只能图片 |
+| 照片 / 物证图 | `picture(...)` | ✅ 本来就不能矢量化 |
+
+**为什么是铁律**：`native_*` 生成 PowerPoint 原生对象，用户能右键「编辑数据」改数字、
+换类型、套主题；图片是死的。这是交付质量的分水岭。
+
+**不要这样做**（实测中模型会犯的错）：
+- ❌ 自己写 `def save(fig, name): fig.savefig(...)` 存图 —— 绕过了所有约束
+- ❌ 只 import 部分函数（如只导入 `native_fishbone`），数据图表仍自己写 matplotlib
+- ❌ 认为"用 matplotlib 更熟悉"就走图片路线
+
+**验收（必须执行）**：
 ```bash
-python3 scripts/verify_native_charts.py <你生成的 deck.pptx>
+python3 scripts/verify_native_charts.py <你的deck.pptx> --allow-images <物证图数量>
 ```
-这个脚本会检查 pptx 里真实有几个原生图表对象。**原生图表 < 3 个就判定失败**，
-必须改代码重做。不要跳过这一步，也不要自己用"我看图挺像的"来替代。
+它会数 pptx 内部的 chart XML 数量。**原生图表 < 3 个 → 判定不合格，必须重做。**
+这个检查看的是最终文件的客观结构，无法通过改代码绕过。
 
-**为什么必须这么严**：实测中模型会自己写 `def save(fig, name): fig.savefig(...)` 直接存图，
-完全绕过 helper 的任何检查。所以唯一可靠的关卡是事后的 pptx 结构检查——
-数一数 pptx 内部有多少个 chart XML，图片有几个。这是客观事实，绕不过去。
+### 铁律 2：字体只用 `CN_FONT`，不自设字体名
 
-| 要画的东西 | 用什么 | 绝对不能 |
-|-----------|--------|---------|
-| 柱状图 / 条形图 | `native_bar(...)` | ❌ 不能用 make_bar + 图片 |
-| 折线图 / 趋势图 | `native_line(...)` | ❌ 不能用 make_line + 图片 |
-| 饼图 / 环形图 | `native_pie(...)` | ❌ 不能用 make_pie + 图片 |
-| 散点图 | `native_scatter(...)` | ❌ 不能用 make_scatter + 图片 |
-| 流程图 / 步骤条 | `native_flow` / `native_chevron_flow` | ❌ 不能用图片 |
-| 层级图 / 组织图 | `native_hierarchy(...)` | ❌ 不能用图片 |
-| 鱼骨图 / 因果图 | `native_fishbone(...)` | ❌ 不能用图片 |
-| 热力图 | `make_heatmap(...)` + 图片 | ✅ 这个只能图片 |
-| Weibull 概率图 / 复杂组合图 | matplotlib + 图片 | ✅ 这个只能图片 |
-| 照片 / 物证图 | `picture(...)` 插入原图 | ✅ 本来就没法矢量化 |
+- 一律用 `CN_FONT` 常量（已按平台自动检测：macOS→PingFang SC、Windows→微软雅黑、Linux→Noto Sans CJK）
+- 或调用 `text()` 时不传 `font` 参数（默认就是 CN_FONT）
+- **禁止**硬编码 `"Hiragino Sans GB"`、`"STHeiti"`、`"Arial"` 等 —— Hiragino 在 Windows 大量缺字，
+  会直接显示成乱码方框（实测出现过：4 个文件用了它，Windows 上全乱码）
+- helper 内有 `UNSAFE_FONTS` 黑名单拦截，但不要依赖拦截，自己别写
 
-**为什么必须这样做**：`native_*` 生成的是 PowerPoint 原生图表/形状，用户能右键编辑数据、
-换类型、套 PPT 主题；图片是死的。交付质量差别很大，这是硬要求不是偏好。
-`save_chart()` 已内置运行时警告——如果看到"该图无法在 PowerPoint 内编辑"的警告，说明走错路了。
+### 铁律 3：配色走 helper，不自写上色逻辑
 
-**步骤 4 的验收脚本（复制执行，必须通过）**：
+- 图表配色：`native_*(..., style=st)` 自动应用风格色板，无需手动设
+- 需要逐点上色（如高亮某根柱子）：用 `paint_points(图, ["#色1", "#色2"])`
+- **禁止**自己写 `point.format.fill.solid()` 循环 —— 实测有模型自写 `paint_points` 有 bug，
+  导致图表退化成 PowerPoint 默认蓝色主题，与全篇风格割裂
+
+---
+
+## 一、代码工具：`scripts/pptx_helpers.py`
+
+设计理念：**底层能力 + 风格系统 + 强制一致性**。用 `from pptx_helpers import *`。
+
+### 1. 底层能力（自由布局）
+`new_deck()` `blank()` `set_bg()` `rect()`（含圆角/边框）`line()` `text()`（富文本）`picture()`
+
+### 2. 风格系统
 ```python
-import zipfile
-from pptx import Presentation
-prs = Presentation("deck.pptx")
-with zipfile.ZipFile("deck.pptx") as z:
-    n_charts = len([n for n in z.namelist() if "ppt/charts/chart" in n and n.endswith(".xml")])
-pics = sum(1 for s in prs.slides for sh in s.shapes if sh.shape_type == 13)
-photos = 4  # 任务要求的物证图数量
-print(f"原生图表 {n_charts} 个 | 图片 {pics} 张（其中物证照 {photos}）")
-assert n_charts >= 3, "基础图表必须用原生图表，不能用图片"
-assert pics - photos <= 2, f"多出 {pics-photos} 张非物证图片——这些图应改成 native_*"
+st = get_style("tech")       # 科技深色
+st = get_style("minimal")    # 极简留白
+st = get_style("editorial")  # 杂志图文（米白/墨绿/陶土）
+st = get_style("warm")       # 暖色商务
+st = expand_palette("#2E75B6", "#E08A2E")   # 从用户给的 1~3 个基础色拓展完整色系
+hexcolor("#RRGGBB")          # hex → RGBColor
 ```
-不通过就重做，不要交付。
+每个 style 含：`bg/panel/primary/accent/text/muted/light/white/series`
+
+### 3. 装饰元素
+`big_number()` 大数字焦点 · `tag()` 标签徽章 · `flow()` 简单流程条 · `kicker()` 小字引导
+`title_bar()` 标准标题（返回正文起始 y）· `footer()` 页脚
+
+### 4. 原生图表（**铁律 1**）
+```python
+native_bar(slide, L, T, W, H, categories, {"系列": [值...]}, st, title="...")
+native_line(...)  native_pie(..., donut=True)  native_scatter(..., {"名": (xs, ys)})
+paint_points(图, ["#C77B3F", "#8AA38F"])   # 逐点上色
+```
+多系列自动应用完整色板；饼图自动逐扇区上色。
+
+### 5. 原生图形（替代 SmartArt，全矢量可编辑）
+`native_flow(steps...)` · `native_chevron_flow(...)` · `native_hierarchy(root, children...)` · `native_fishbone(effect, {类别: [原因]})`
+
+### 6. 图片图表（仅限热力图 / Weibull / 复杂组合）
+`make_heatmap()` `make_bar()` `make_line()` `make_pie()` `make_scatter()` + `save_chart()`
+（注意：`make_bar/line/pie/scatter` 会触发警告提醒你改用 native_*）
+
+### 7. 参考版式（可选，可自定义）
+`cover()` `section()` `closing()`
 
 ---
 
-## 核心原则（先记住这四条）
+## 二、设计风格
 
-1. **结论先行**：每页标题就是一句话结论，不是"XX 分析"。读者只看标题就能抓到信息。
-2. **单页一观点**：一页只讲一个核心信息，多余的拆到下一页。
-3. **图表为结论服务**：先想清楚"我要让读者看到什么"，再选图。图表不是装饰。
-4. **一致性即专业感**：配色、字体、标题位置、页眉页脚在全篇统一。
+四套内置风格，选风格的依据是**场合和读者**：
+- 技术评审 / 工程攻关 → `minimal` 或 `editorial`（克制专业）
+- 管理层 / 商务汇报 → `warm`
+- 有故事性 / 图多 → `editorial`
+- 大屏 / 夜间展示 → `tech`
 
----
+### ⚠️ 反趋同规则
 
-## 零、问题攻关型 PPT 的专用方法（研发/质量/可靠性场景）
+**默认不要选 `tech`**。实测：并行产出 12 份 PPT 时，11 份都选了 tech 深色，
+全部长得一样，失去设计价值。模型会趋同到"看起来最酷"的那套。
 
-这类 PPT 的骨架是"问题 → 根因 → 对策"，不是"现象 → 描述"。核心方法论：
+决策顺序：
+1. 用户指定了风格/配色 → 严格照做
+2. 技术评审/工程攻关 → `minimal` 或 `editorial`（tech 深色在评审场合反而显得浮夸）
+3. 管理层/商务 → `warm`
+4. 需要视觉冲击 → `editorial`
+5. 只有明确需要"科技感/夜间/大屏"才用 `tech`
 
-### 5W2H 定义问题
-What（什么问题）、Where（在哪发生）、When（何时发生）、Who（谁/哪个批次/哪条线）、
-Why（为什么是问题）、How（多严重）、How much（量化：退回率、失效率、成本）。
-问题页必须用 5W2H 把边界说清楚，否则后续分析会发散。
+**必须在最终报告里用一句话说明"为什么选这套风格"** —— 让风格成为设计决策，不是默认值。
 
-### 人机料法环（4M1E）排查
-人（Man，操作/班组）、机（Machine，设备/产线）、料（Material，物料/批次）、
-法（Method，工艺/参数）、环（Environment，温湿度/应力）。
-逐项排查，但**警惕单维度假象**：某维度失效率偏高，可能是另一维度（如料）分布
-不均匀造成的假关联——务必做**分层交叉分析**（如料×环、料×机）才能定位真因。
-
-### 鱼骨图 + 5Why 找根因
-- 鱼骨图（因果图）把可能原因按人机料法环分类，逐条验证。
-- 5Why 从现象连续追问"为什么"，直到找到可行动的根本原因（某个物料批次、某个
-  工艺参数、某个设计缺陷），不要停在"环境不好""人员疏忽"这类表层。
-
-### 可靠性/失效分析（工程场景）
-- Weibull 分布：形状参数 β<1 表示早期失效（制造/物料缺陷），β≈1 随机失效，
-  β>1 磨损/老化失效。β 是区分失效性质的关键证据。
-- 浴盆曲线：早期失效期 → 偶然失效期 → 磨损期。
-- 失效模式分布（帕累托）区分主要失效机理。
-
-### 证据展示原则
-- 物证图片（失效件照片、X-ray、波形、切片）必须与结论对应放置，**每张图配一句
-  说明它证明了什么**，不要堆图。
-- 数据图（趋势、分层、Weibull 概率图）讲"统计规律"，物证图讲"物理机理"，
-  两者共同锁定根因。
-
-### 8D / 问题解决报告结构
-D1 成立小组 → D2 描述问题(5W2H) → D3 临时措施 → D4 根因分析(鱼骨图/5Why/数据) →
-D5 永久对策 → D6 验证 → D7 预防再发 → D8 总结。PPT 可浓缩为：
-背景 → 问题定义 → 排查/分析 → 根因锁定 → 对策 → 验证/预防。
-
----
-
-## 一、叙事结构
-
-### 金字塔原理
-- 结论先行（先说答案）
-- 以上统下（上层结论由下层论据支撑）
-- 归类分组（同类信息归一组）
-- 逻辑递进（按重要性或时间排列）
-
-### 推荐结构（12 页左右的标准汇报）
-1. 封面：标题 + 副标题 + 汇报人/日期
-2. 目录 / 摘要页：整份汇报的 3–5 条核心结论（执行摘要）
-3. 逐主题分析页：每个主题 1–2 页，每页一条结论
-4. 建议 / 行动项页：把洞察落到"下一步做什么"
-5. 封底：谢谢 / 联系方式 / Q&A
-
-### 每页的内容骨架
-- **标题 = 结论**（例如"西南区域 2024 年收入同比增长 45%，是唯一高增长引擎"，而不是"区域收入分析"）
-- **主体 = 支撑证据**（图表 + 关键数字标注）
-- **脚注 = 数据口径 / 来源**（可选，但体现严谨）
-
----
-
-## 二、图表选型指南
-
-### ⚠️ 实现方式优先级（先读这条）
-
-做图表前先问自己：**这个图能不能用原生图表实现？**
-
-| 图表类型 | 实现方式 | 用什么 |
-|---------|---------|--------|
-| 柱状/条形、折线、饼图/环形、散点 | ✅ **必须用原生** | `native_bar` / `native_line` / `native_pie` / `native_scatter` |
-| 热力图、Weibull 概率图、复杂组合图 | 用图片 | `make_heatmap` / 自定义 matplotlib |
-| 鱼骨图、流程图、层级图 | ✅ **必须用原生形状** | `native_fishbone` / `native_flow` / `native_chevron_flow` / `native_hierarchy` |
-
-**原生图表的价值**：生成的是 PowerPoint 原生对象，用户可在 PPT 内「右键→编辑数据」直接改数字、
-换图表类型、套用 PPT 自带样式。用图片则完全不可编辑，这是明显的质量降级。
-不要因为"用 matplotlib 更熟悉"就默认走图片路径。
-
-
-| 你要表达 | 用这种图 | 说明 |
-|---------|---------|------|
-| 随时间变化 / 趋势 | 折线图 | 突出斜率与拐点 |
-| 对比 / 排序 | 条形图（横向优先） | 类别标签长时用横向 |
-| 构成 / 占比 | 饼图（≤5类）或堆叠条形（多类） | 5 类以上别用饼图 |
-| 分布 | 直方图 / 箱线图 | 看离散与离群 |
-| 两变量关系 / 相关 | 散点图 | 可加趋势线 |
-| 达成率 / 进度 | 条形 + 目标线 | 直观 |
-
-### 反模式（避免这些）
-- ✗ 3D 图表、透视饼图 —— 扭曲视觉比例
-- ✗ 柱状图 Y 轴不从 0 开始 —— 夸大差异
-- ✗ 双饼图对比 —— 面积难比较
-- ✗ 一页塞 3 个以上图表 —— 信息过载
-- ✗ 无标注的裸图 —— 读者不知道看哪
-
----
-
-## 三、设计风格（多套可选，让汇报有风格差异）
-
-pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看全量）：
-- `tech` 科技深色：深蓝黑底 + 亮青/橙点缀 + 几何网格，适合技术评审/工程攻关
-- `minimal` 极简留白：白底大量留白 + 单一红色点缀 + 细线，适合严肃汇报/答辩
-- `editorial` 杂志图文：米白底 + 墨绿/陶土色 + 大图主导，适合有故事性的汇报
-- `warm` 暖色商务：暖灰底 + 深蓝/琥珀 + 圆角色块卡片，适合管理层/商务
-
-**选风格的依据**：看场合和读者（技术评审→tech，高层汇报→warm，严肃答辩→minimal，
-有故事性的→editorial）。全篇用同一套风格保持统一，但**不同页可用不同版式**。
-
-**⚠️ 反趋同硬规则（务必遵守）**：
-默认不要选 `tech`。这是最容易导致视觉趋同的风格——多个任务并行产出时若都选 tech，
-所有 PPT 会长得几乎一样，失去设计价值。按以下顺序决策：
-1. 若用户/任务指定了风格或配色 → 严格照做。
-2. 若任务属于「技术评审/工程攻关」→ 优先 `minimal` 或 `editorial`（更显专业克制，tech 深色反而显得浮夸）。
-3. 若任务面向管理层/商务 → `warm`。
-4. 若需要视觉冲击/有故事性 → `editorial`。
-5. 只有在明确需要「科技感/夜间展示/大屏」时才用 `tech`。
-判定要有理由：在最终报告里用一句话说明「为什么选这套风格」，让风格成为设计决策而非默认值。
-
-**字体硬规则**：不要自己硬编码字体名（如 "Hiragino Sans GB"、Arial 等）。
-一律使用 `CN_FONT` 常量（已按平台自动检测），或在 `text()` 里不传 `font` 参数让它用默认。
-自设字体名会导致跨平台渲染异常。
-
-### 用户提供配色时（expand_palette）
-若用户从网站找到喜欢的配色（给 1~3 个 hex 色值），用 `expand_palette("#2E75B6", "#E08A2E")`
-从基础色自动拓展出完整色系（主色/强调色/文字/浅底/图表系列色），返回的 style dict 用法同
-`get_style()`。没提供配色时，用内置 STYLES，或根据主题/受众自定。
-
-### 通用设计原则（所有风格都适用）
-- 视觉层次：每页有且只有一个视觉焦点（大数字/主图/主结论），其余弱化。
-- 留白是设计的一部分，不要填满；信息密度要有张有弛。
-- 对齐：文字左对齐、数字右对齐、图表居中、元素对齐到同一网格。
-
-### 反 AI 味清单（务必遵守）
-- ✗ 每页都是"标题 + 3~5 个圆点要点"——用大数字、图表主导、图文混排、流程条交替打破节奏。
-- ✗ 空话套话（"赋能""闭环""抓手""深度打通"）——用具体数字、具体动作、具体责任。
-- ✗ 千篇一律的居中标题 + 对称布局——用不对称构图、色块分区、边栏制造变化。
-- ✗ 图表配一句空洞总结——图注要么讲数字、要么讲机理、要么讲行动。
-- ✗ 装饰元素堆砌——装饰（线条/色块/标签）要服务信息，不要为加而加。
-- ✓ 允许"一页一图一大字"的留白页，也允许"密集证据页"，让汇报有呼吸感。
+### 反 AI 味清单
+- ✗ 每页都是"标题 + 3~5 个要点" —— 用大数字、图表主导、图文混排、流程条交替打破节奏
+- ✗ 空话套话（"赋能""闭环""抓手""深度打通"）—— 用具体数字、具体动作
+- ✗ 千篇一律的居中标题 + 对称布局 —— 用不对称构图、色块分区、边栏
+- ✗ 图表配空洞总结 —— 图注要么讲数字、要么讲机理、要么讲行动
+- ✓ 允许"一页一图一大字"的留白页，也允许"密集证据页"，让汇报有呼吸感
 
 ### 字号层级（16:9，13.33×7.5 英寸）
-- 页面标题：24–28pt 加粗；小节标题 18–20pt；正文 14–16pt；图表/脚注 10–12pt。
-- 核心结论数字放大到 36–54pt（`big_number()`），用强调色，单独一行——"大数字"是记忆点。
+页面标题 24–28pt 加粗 · 小节标题 18–20pt · 正文 14–16pt · 图表/脚注 10–12pt
+核心数字 36–54pt（`big_number()`），用强调色单独一行
 
 ---
 
-## 四、代码工具（pptx_helpers.py — 设计工具库，非固定模板）
+## 三、叙事结构
 
-本 skill 附带 `scripts/pptx_helpers.py`，是**设计工具库**：给底层能力和风格，不强制套某一种版式。
-先读脚本了解函数签名，再 `from pptx_helpers import *`（脚本需在 sys.path 里）。
+### 金字塔原理
+结论先行 → 以上统下 → 归类分组 → 逻辑递进
 
-五层结构：
-1. **底层能力**：`new_deck()`、`blank()`、`set_bg()`、`rect()`（含圆角/边框）、`line()`、
-   `text()`（富文本）、`picture()` —— 自由组合做任意布局。
-2. **风格系统**：`STYLES` / `get_style("tech|minimal|editorial|warm")` / `hexcolor("#RRGGBB")`。
-3. **装饰元素**：`big_number()` 大数字、`tag()` 标签徽章、`flow()` 流程条、`kicker()`、
-   `title_bar()`（返回正文起始 y）、`footer()`。
-4. **图表**：**优先用原生图表**（`native_bar` / `native_line` / `native_pie` / `native_scatter`）——
-   生成的是 PowerPoint 原生图表对象，用户可在 PPT 里「右键→编辑数据」直接改，优于图片。
-   只有原生图表表达不了的才用 matplotlib 图片（`make_heatmap` 热力图、Weibull 概率图、
-   自定义组合图）：`make_bar` / `make_line` / `make_pie` / `make_heatmap` / `make_scatter` + `save_chart()`。
-5. **图形化元素**：用原生形状函数替代 SmartArt（python-pptx 无 SmartArt API）——
-   `native_flow`（横向流程条）、`native_chevron_flow`（V 形箭头流程）、
-   `native_hierarchy`（层级/组织图）、`native_fishbone`（鱼骨图，全矢量可编辑）。
-   这些生成的都是可编辑的原生形状，不是图片。
-6. **参考版式**（可选、可自定义）：`cover()`、`section()`、`closing()`。
+### 标准汇报结构（12–14 页）
+1. 封面（标题 + 副标题 + 汇报人/日期）
+2. 执行摘要（3–5 条核心结论）
+3. 逐主题分析页（每页一条结论）
+4. 建议/行动项页
+5. 封底
 
-**设计决策权在你**：可以只用底层能力 + 风格自己设计（产生差异），也可以用参考版式快速起稿。
-不要从头手搓每一行 pptx 代码；需要自定义时在底层函数之上组合，不要改图表函数本身。
+### 每页骨架
+- **标题 = 一句话结论**（"西南区域同比增长 45%，是唯一增长引擎"，不是"区域收入分析"）
+- **主体 = 支撑证据**（图表 + 关键数字标注）
+- **脚注 = 数据口径/来源**
 
-**原生图表/形状的完整签名与页面配方**见 `references/native-charts-api.md`。
+---
 
-## 五、推荐工作流程
+## 四、问题攻关型 PPT（研发/质量/可靠性）
 
-1. **读数据**：读入 CSV/数据文件，理解字段与量纲。
-2. **分析**：算趋势、对比、构成、异常；用 pandas/matplotlib 验证。
-3. **提炼洞察**：挑出 3–5 个真正重要的发现（"所以呢？"），写成一句话结论。
-4. **设计叙事线**：把结论按金字塔排序，映射到页面结构。
-5. **生成**：写脚本，用 helper + python-pptx 产出 .pptx。
-6. **自检**：跑一遍质量检查清单（见下），确认文件可打开、无溢出。
-7. **交付**：给出文件绝对路径。
+骨架是"问题 → 根因 → 对策"，不是"现象 → 描述"。
 
-## 六、质量检查清单（交付前必过）
+### 5W2H 定义问题
+What / Where / When / Who / Why / How / How much（量化：失效率、退回率、成本）
 
-- [ ] 文件能正常打开（用 python-pptx 重新读取验证，或确认无脚本报错）
-- [ ] 页数符合要求
-- [ ] 每页标题是一条结论，而非"XX 分析"
-- [ ] 图表类型与数据匹配，无 3D/误导性图表
-- [ ] 配色字体全篇统一，标题位置一致
-- [ ] 无文本溢出（长文本做了截断或换行）
-- [ ] 关键数字准确，与源数据一致
-- [ ] 有封面 + 执行摘要/目录 + 建议页
+### 人机料法环（4M1E）排查
+人 / 机 / 料 / 法 / 环 逐项排查。
+**警惕单维度假象**：某维度失效率偏高可能是另一维度分布不均造成的假关联
+（如"某产线失效率高"实际是该产线生产了更多问题批次料）。必须做**分层交叉分析**。
 
-## 常见坑
-- **别默认用 matplotlib 图片画基础图表**。柱/折/饼/散点一律用 `native_*` 函数——图片无法在 PPT 内编辑，是质量降级。只有热力图、Weibull 概率图这类原生表达不了的才用图片。实测教训：写了优先级表之后模型仍惯性走图片路线，所以必须跑「步骤 4 验收脚本」。
-- **字体只用 CN_FONT**，绝不自设字体名。`Hiragino Sans GB`/`STHeiti` 在 Windows 上缺字会导致乱码（实测 12 份产出中有 4 份用 Hiragino 出现乱码），helper 已加黑名单拦截，但不要主动使用。
-- **修改本 skill 的 helper 后要清 `__pycache__`**，否则模型读到的仍是旧版函数列表，会看不到新加的 native_* 函数。
-- **用脚本批量改 skill 文件时，字符串匹配极易插错位置**（本 skill 曾把警告误插进 `make_heatmap` 和 `cover`）。改完必须 `grep -n` 逐处确认，并跑真实的调用测试，不要只信 `lint: ok`。
-- python-pptx 默认字体是 Calibri，中文可能渲染异常——务必显式设置 `FONTS` 中的中文字体。
-- 直接往文本框塞超长字符串会溢出，务必控制每行字数或设自动换行。
-- matplotlib 生成 PNG 时注意 `dpi`（建议 ≥150）和 `bbox_inches='tight'`，否则图表发虚。
-- 中文字体在 matplotlib 里默认显示为方框，需先设置 `plt.rcParams['font.sans-serif']`。
-- `from pptx_helpers import *` **不会** 导入下划线开头的 `_slide_title`，需要额外 `from pptx_helpers import _slide_title`。
-- **单位混算致命坑**：`Inches(img_w - Inches(0.2))` 里 `img_w` 是 float、`Inches(0.2)` 是 EMU，相减得负数 →
-  文本框宽度为负，Keynote 能容错、PowerPoint 可能提示修复。统一传英寸数值：`Inches(img_w - 0.2)`。
-- 大字号装饰文字（如 150pt 年份水印）必须 `text_frame.word_wrap = False`，否则会被折成「202」+「4」。
-- 需要文本框垂直居中时设 `text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE`（`*` 导入已带 MSO_ANCHOR）。
-- 瀑布图浮动柱：`base`/`height` 必须同号语义——向下柱用 `base=起点值, height=负增量`；
-  写成 `height=-负增量` 会让柱子反向生长、柱顶越过总量柱，图上逻辑直接错。
+### 鱼骨图 + 5Why
+鱼骨图按人机料法环分类列出可能原因；5Why 从现象连续追问到可行动的根本原因
+（某物料批次、某工艺参数、某设计缺陷），不要停在"环境不好""人员疏忽"。
 
-## 七、交付前的视觉自检（强烈建议，别只看代码）
+### 可靠性/失效分析
+- **Weibull 形状参数 β**：β<1 早期失效（制造/物料缺陷）、β≈1 随机失效、β>1 磨损老化
+- 浴盆曲线：早期失效期 → 偶然失效期 → 磨损期
+- 失效模式分布（帕累托）区分主要失效机理
+- **失效率必须用出货量做分母**，只看失效绝对数会被市场规模误导
 
-代码跑通 ≠ 版面正确。经验上至少藏着 1–3 处「数据逻辑错位」或「标签压字」，
-只有渲染成图才看得见（vision 读图能抓到，纯代码检查抓不到）。
+### 证据展示
+- 物证图（失效件照片、X-ray、波形、切片）与结论对应放置，**每张配一句"它证明了什么"**
+- 数据图讲"统计规律"，物证图讲"物理机理"，两者互证锁定根因
+- 排除项也要展示（如"X-ray 空洞在规格内，排除焊接根因"），体现排查严谨性
 
-按平台选择渲染链路（三平台通用兜底：LibreOffice headless）：
+### 8D 结构
+D1 小组 → D2 描述问题(5W2H) → D3 临时措施 → D4 根因分析 → D5 永久对策 →
+D6 验证 → D7 预防再发 → D8 总结。
+PPT 浓缩为：背景 → 问题定义 → 排查分析 → 根因锁定 → 对策 → 验证
 
-macOS（Keynote 最稳，无需装 LibreOffice）：
+---
+
+## 五、图表选型
+
+| 表达什么 | 图表 | 实现 |
+|---------|------|------|
+| 趋势 | 折线图 | native_line |
+| 对比/排序 | 条形图（横向优先） | native_bar(horizontal=True) |
+| 构成/占比 | 饼图(≤5类) / 环形 | native_pie |
+| 关系/相关 | 散点图 | native_scatter |
+| 交叉分析（料×环） | 热力图 | make_heatmap（图片） |
+| 失效分布 | Weibull 概率图 | matplotlib（图片） |
+| 根因分类 | 鱼骨图 | native_fishbone |
+
+### 反模式
+✗ 3D 图表/透视饼图（扭曲比例） ✗ 柱状图 Y 轴不从 0 开始 ✗ 双饼图对比
+✗ 一页超 3 个图表 ✗ 无标注裸图
+
+---
+
+## 六、工作流程
+
+1. **读数据** → 2. **分析**（pandas，算趋势/对比/分层/异常）→ 3. **提炼洞察**（3–5 条，"所以呢？"）
+→ 4. **设计叙事线**（金字塔排序）→ 5. **列图表清单**（逐个标注类型 + 实现方式）
+→ 6. **生成**（用 native_* 画基础图表）→ 7. **验收**（跑 verify_native_charts.py）
+→ 8. **视觉自检**（见第七节）→ 9. **交付**（给文件路径）
+
+---
+
+## 七、交付前的两重自检
+
+### 结构化自检（必须，可自动）
+```bash
+python3 scripts/verify_native_charts.py deck.pptx --allow-images <物证图数>
+```
+检查：原生图表 ≥3、图片数不超容差、有嵌入数据。
+
+同时用代码独立复核关键数字（重读 CSV 重算，再断言 pptx 里的字符串）——
+视觉检查看不出"数字算错"，它只会说"数字清晰可读"。
+
+### 视觉自检（强烈建议）
+代码跑通 ≠ 版面正确。至少藏着 1–3 处"数据逻辑错位"或"标签压字"，只有渲染才看得见。
+
+**macOS**（Keynote 最稳）：
 ```bash
 osascript -e 'tell application "Keynote"
   activate
-  set d to open POSIX file "/abs/path/deck.pptx"
+  set d to open POSIX file "/abs/deck.pptx"
   delay 3
-  export d to POSIX file "/abs/path/preview.pdf" as PDF
+  export d to POSIX file "/abs/preview.pdf" as PDF
   close d saving no
 end tell'
 ```
 
-Windows（优先 PowerPoint COM，或装 LibreOffice）：
+**Windows**（PowerPoint COM）：
 ```powershell
-# 方式一：PowerPoint COM 导出 PDF
 $pp = New-Object -ComObject PowerPoint.Application
-$p = $pp.Presentations.Open("C:\abs\path\deck.pptx", $true, $false, $false)
-$p.SaveAs("C:\abs\path\preview.pdf", 32)   # 32 = ppSaveAsPDF
+$p = $pp.Presentations.Open("C:\abs\deck.pptx", $true, $false, $false)
+$p.SaveAs("C:\abs\preview.pdf", 32)
 $p.Close(); $pp.Quit()
-# 方式二：LibreOffice headless（同 Linux）
 ```
 
-Linux / 三平台通用（LibreOffice headless）：
+**Linux / 三平台通用**（LibreOffice）：
 ```bash
 soffice --headless --convert-to pdf --outdir . deck.pptx
 ```
 
-之后统一（三平台一致）：
+之后统一转 PNG 并逐页检查：
 ```bash
-# PDF 逐页转 PNG
 python3 -c "import pymupdf; d=pymupdf.open('preview.pdf'); [p.get_pixmap(dpi=110).save(f'preview/s{i+1:02d}.png') for i,p in enumerate(d)]"
-# 用 vision 工具逐页读图质检（全部页都要看，不要抽样），迭代到无「高」级问题
 ```
-质检必查：文字溢出/裁切、元素重叠、tofu 方框、图表标签压柱、图例遮挡、页码缺失。
-**同时必须用代码独立复核关键数字**（重读 CSV 重算，再断言 pptx 里的字符串），
-因为 vision 看不出「数字算错」——它只会说"数字清晰可读"。
+必查：文字溢出/裁切、元素重叠、tofu 方框、图表标签压柱、图例遮挡、页码缺失、**配色与主题是否统一**。
 
-分页粒度陷阱：宽表（year×month×region×category）里同一 region-month 有 4 行品类数据，
-`groupby("year").store_count.sum()` 会把门店数放大 4 倍。凡「每店」类指标，
-先按最细粒度去重（`.groupby(["year","region"]).first()`）再聚合。
+---
+
+## 八、常见坑（全部来自实战）
+
+**图表**
+- 多系列图表务必确认每个系列都上了色 —— 否则退化成 PowerPoint 默认蓝色主题（实测发生过）
+- 逐点上色只用 `paint_points()`，不要自己写循环（实测有 bug 版本导致配色失效）
+- 饼图必须逐扇区上色，`_apply_chart_style` 只给"系列"上色对饼图不够
+
+**布局**
+- **单位混算致命坑**：`Inches(img_w - Inches(0.2))` 里 img_w 是 float、Inches(0.2) 是 EMU，
+  相减得负数 → 文本框宽度为负，PowerPoint 可能提示修复。统一传英寸数值：`Inches(img_w - 0.2)`
+- 大字号装饰文字必须 `text_frame.word_wrap = False`，否则被折行（150pt 的 "2024" 会变成 "202"+ "4"）
+- 文本框垂直居中用 `text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE`
+
+**数据**
+- 宽表分页粒度陷阱：同一 region-month 有 4 行品类数据时，`groupby("year").store_count.sum()`
+  会把门店数放大 4 倍。凡"每店"类指标先按最细粒度去重再聚合
+- 瀑布图浮动柱：`base`/`height` 必须同号语义，向下柱用 `base=起点, height=负增量`
+
+**字体**
+- 见铁律 2。Hiragino Sans GB / STHeiti 在 Windows 缺字 → 乱码
+
+---
+
+## 九、与其他 agent 协作时的注意事项
+
+本 skill 的方法论与 `pptx_helpers.py` 均为纯文本 + 纯 Python（仅依赖 python-pptx /
+matplotlib / numpy / pandas / scipy），可移植到任何遵循 SKILL.md 约定的 agent
+（Claude Code、opencode 等）。移植时注意：
+- 把 `CN_FONT` 的平台检测保留（跨平台关键）
+- `verify_native_charts.py` 要一并带上（否则模型可能绕过原生图表要求）
+- 若宿主 agent 的任务描述与本文冲突，**以任务描述为准**，但要主动指出冲突让用户知晓
