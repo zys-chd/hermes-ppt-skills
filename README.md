@@ -21,12 +21,22 @@
 - 分批提问原则（每次 3~5 个，不重复问）
 - 产出结构化 brief 模板
 
+
+### problem-diagnosis — 问题诊断与排查框架
+在还没有分析结果时，仅凭问题背景帮用户做系统性辅助分析。
+
+- 按问题类型选择分析方法（5W2H / 人机料法环 / 鱼骨图 / 5Why / FMEA / 帕累托 / 8D）
+- 用选定方法结构化拆解问题空间
+- 产出可逐一排查的 checklist（排查项 / 怎么查 / 判据 / 需要的证据 / 负责人 / 状态）
+- 可单独使用，也可作为 ppt-builder 的上游（排查结果 → 汇报 PPT）
+
 ## 安装
 
 ```bash
 mkdir -p ~/.hermes/skills/productivity
 cp -r ppt-builder ~/.hermes/skills/productivity/
 cp -r ppt-brief  ~/.hermes/skills/productivity/
+cp -r problem-diagnosis ~/.hermes/skills/productivity/
 ```
 
 ## 依赖
