@@ -54,13 +54,42 @@ python3 scripts/verify_native_charts.py <你的deck.pptx> --allow-images <物证
 它会数 pptx 内部的 chart XML 数量。**原生图表 < 3 个 → 判定不合格，必须重做。**
 这个检查看的是最终文件的客观结构，无法通过改代码绕过。
 
+### 为什么验收要看「最终文件结构」而不是代码（四轮失败换来的）
+
+实测中约束模型用 `native_*` 失败了 4 轮，每一轮都以为是措辞问题：
+
+| 手段 | 结果 | 原因 |
+|------|------|------|
+| SKILL.md 里写清优先级表 | ❌ 无效 | 位置靠后，且 matplotlib 说明篇幅更大，模型先记住后者 |
+| 提到文档最顶部的检查点 | ❌ 无效 | 模型仍照自己的习惯写 |
+| helper 里加运行时 `warnings.warn` | ❌ 无效 | **模型自己写了 `def save(fig): fig.savefig()`，压根不经过 helper** |
+| **事后检查 pptx 内部 chart XML 数量** | ✅ 有效 | 看的是最终文件的客观事实，改代码绕不过 |
+
+**通用教训（适用于任何"要求模型用我的工具库"的场景）**：
+- 运行时检查/警告防不住模型 —— 它能重写你的函数、绕过你的 API、直接调底层库。
+- **唯一可靠的约束是「对最终产物做客观结构检查」**，因为产物是事实，代码路径可以任意绕。
+- 检查脚本要能一眼判定（数量阈值 + 退出码），并写进流程里"不通过不算完成"。
+
+### 更根本的前提：先确认指令源没有冲突
+
+上述四轮排查里，**真正的主因其实在任务 prompt**（写着"用 matplotlib 生成 PNG"），
+与 skill 直接矛盾。模型服从 prompt 是正确的。所以在怀疑 skill 措辞之前，
+**第一件事是并排读 prompt 与 skill 的原文**（详见第九节"冲突时怎么办"）。
+顺序是：先排除指令冲突 → 再上事后结构验收；两者都做到才闭环。
+
 ### 铁律 2：字体只用 `CN_FONT`，不自设字体名
 
 - 一律用 `CN_FONT` 常量（已按平台自动检测：macOS→PingFang SC、Windows→微软雅黑、Linux→Noto Sans CJK）
 - 或调用 `text()` 时不传 `font` 参数（默认就是 CN_FONT）
-- **禁止**硬编码 `"Hiragino Sans GB"`、`"STHeiti"`、`"Arial"` 等 —— Hiragino 在 Windows 大量缺字，
-  会直接显示成乱码方框（实测出现过：4 个文件用了它，Windows 上全乱码）
+- **禁止**硬编码 `"Songti SC"`、`"Hiragino Sans GB"`、`"STHeiti"`、`"Arial"` 等 ——
+  前三个是 macOS 专有字体，交付到 Windows 会缺字（Hiragino 更是直接乱码方框，实测出现过 4 个文件全乱码）
 - helper 内有 `UNSAFE_FONTS` 黑名单拦截，但不要依赖拦截，自己别写
+
+**跨平台交付场景**（PPT 要发给 Windows 用户看）：
+```bash
+export PPT_CN_FONT="Microsoft YaHei"   # 强制用微软雅黑，保证 Windows 上观感一致
+```
+macOS 自用不需要设，自动选 PingFang SC 更美观。
 
 ### 铁律 3：配色走 helper，不自写上色逻辑
 
@@ -68,6 +97,24 @@ python3 scripts/verify_native_charts.py <你的deck.pptx> --allow-images <物证
 - 需要逐点上色（如高亮某根柱子）：用 `paint_points(图, ["#色1", "#色2"])`
 - **禁止**自己写 `point.format.fill.solid()` 循环 —— 实测有模型自写 `paint_points` 有 bug，
   导致图表退化成 PowerPoint 默认蓝色主题，与全篇风格割裂
+- **交付前必查配色是否真的落盘**：用户肉眼能发现"有几张图颜色和主题不统一"，而代码看着没问题。
+  逐页审计每个 chart 的系列色，任何 `继承主题` / 非色板色都算不合格：
+
+```python
+from pptx import Presentation
+p = Presentation("deck.pptx")
+for i, s in enumerate(p.slides, 1):
+    for sh in s.shapes:
+        if sh.has_chart:
+            for ser in sh.chart.series:
+                try:
+                    print(i, ser.format.fill.fore_color.rgb)   # 必须都是色板内的色
+                except Exception:
+                    print(i, "继承主题 ← 不合格")
+```
+
+  饼图还要单独查每个扇区（`series[0].points[i].format.fill`），因为系列级上色对饼图无效。
+  最可靠的做法是只用 `native_pie(pct_in_label=True)`，它内部已逐扇区上色。
 
 ---
 

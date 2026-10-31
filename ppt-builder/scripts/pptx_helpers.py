@@ -48,10 +48,14 @@ _CN_FONT_PLATFORM_FALLBACK = {
     "Linux": "Noto Sans CJK SC",
 }
 
-# 安全字体白名单：这些字体在中英文 Windows/macOS 下都不会缺字（避免乱码）
-SAFE_CN_FONTS = {"PingFang SC", "Microsoft YaHei", "SimHei", "SimSun",
+# 跨平台安全字体：这些在 Windows 和 macOS 上都能正常显示中文（不会缺字）
+# 严格来说只有两族是真正跨平台的：微软雅黑（Windows 原生，macOS 装了 Office 也有）+
+# 思源/Noto 系列（开源，可随处安装）。PingFang/Songti/Heiti 是 macOS 专有，
+# 只在 macOS 内部使用是安全的，跨平台交付需注意。
+SAFE_CN_FONTS = {"Microsoft YaHei", "SimHei", "Arial Unicode MS",
                  "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
-                 "Heiti SC", "Songti SC", "Arial Unicode MS"}
+                 # 以下是 macOS 专有——本机使用安全，跨平台交付时可能缺字（会回退，不乱码）
+                 "PingFang SC", "Heiti SC", "Songti SC"}
 # 已知跨平台易缺字/易乱码的字体（禁止使用）
 UNSAFE_FONTS = {"Hiragino Sans GB", "Hiragino Sans", "STHeiti", "Droid Sans Fallback"}
 
