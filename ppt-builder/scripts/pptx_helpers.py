@@ -622,10 +622,15 @@ def paint_points(chart_or_graphicframe, colors, series_idx=0):
 
     chart_or_graphicframe: native_bar/native_pie 等的返回值（GraphicFrame）或 chart 对象。
     colors: hex 字符串列表，按数据点顺序循环使用。
-    这是唯一可靠的逐点上色方式——直接操作 point.format.fill，配合 _apply_chart_style 的
-    系列兜底色，保证不会退化成 PowerPoint 主题色。
+    这是唯一可靠的逐点上色方式——直接操作 point.format.fill。
     """
     chart = getattr(chart_or_graphicframe, "chart", chart_or_graphicframe)
+    # 单系列柱图默认 varyColors=1，PowerPoint 会忽略系列填充改用调色板逐点着色。
+    # 逐点上色时必须关掉它，否则我们设的颜色可能被覆盖。
+    try:
+        chart.plots[0].vary_by_categories = False
+    except Exception:
+        pass
     ser = chart.series[series_idx]
     n = len(colors)
     for i, point in enumerate(ser.points):
@@ -771,10 +776,20 @@ def native_line(slide, left, top, width, height, categories, series, style, titl
 
 
 def native_pie(slide, left, top, width, height, categories, values, style, title="",
-               donut=False, data_labels=True, colors=None, show_legend=True):
-    """原生饼图/环形图。逐扇区自动用完整色板。"""
+               donut=False, data_labels=True, colors=None, show_legend=True,
+               pct_in_label=False):
+    """原生饼图/环形图。逐扇区自动用完整色板。
+
+    pct_in_label=True 时把百分比写进类目名（如 "无输出 48%"），并关掉数据标签——
+    这是跨渲染器最稳的做法：部分渲染器会忽略 showPercent 把 numFmt 套到原始值上
+    （显示 "463.0%"）。默认 False 用标准百分比标签。
+    """
     cd = CategoryChartData()
-    cd.categories = categories
+    total = float(sum(values)) or 1.0
+    cats = list(categories)
+    if pct_in_label:
+        cats = [f"{c} {v / total * 100:.0f}%" for c, v in zip(categories, values)]
+    cd.categories = cats
     cd.add_series("占比", values)
     ctype = XL_CHART_TYPE.DOUGHNUT if donut else XL_CHART_TYPE.PIE
     gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
@@ -785,13 +800,17 @@ def native_pie(slide, left, top, width, height, categories, values, style, title
     # 饼图必须逐点上色（否则扇区全是单色）
     palette = colors or style.get("series", [])
     if palette:
+        try:
+            chart.plots[0].vary_by_categories = True
+        except Exception:
+            pass
         for i, point in enumerate(chart.series[0].points):
             try:
                 point.format.fill.solid()
                 point.format.fill.fore_color.rgb = hexcolor(palette[i % len(palette)])
             except Exception:
                 pass
-    if data_labels:
+    if data_labels and not pct_in_label:
         try:
             chart.plots[0].has_data_labels = True
             dl = chart.plots[0].data_labels
