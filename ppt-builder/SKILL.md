@@ -170,9 +170,15 @@ pptx_helpers.py 内置 4 套风格（`get_style(name)` 取用，`STYLES` 查看�
 2. **风格系统**：`STYLES` / `get_style("tech|minimal|editorial|warm")` / `hexcolor("#RRGGBB")`。
 3. **装饰元素**：`big_number()` 大数字、`tag()` 标签徽章、`flow()` 流程条、`kicker()`、
    `title_bar()`（返回正文起始 y）、`footer()`。
-4. **图表**（matplotlib 中文 OK）：`make_bar` / `make_line` / `make_pie` / `make_heatmap` /
-   `make_scatter` + `save_chart()`。`make_heatmap` 是料×环、料×机等交叉分析必备。
-5. **参考版式**（可选、可自定义）：`cover()`、`section()`、`closing()`。
+4. **图表**：**优先用原生图表**（`native_bar` / `native_line` / `native_pie` / `native_scatter`）——
+   生成的是 PowerPoint 原生图表对象，用户可在 PPT 里「右键→编辑数据」直接改，优于图片。
+   只有原生图表表达不了的才用 matplotlib 图片（`make_heatmap` 热力图、Weibull 概率图、
+   自定义组合图）：`make_bar` / `make_line` / `make_pie` / `make_heatmap` / `make_scatter` + `save_chart()`。
+5. **图形化元素**：用原生形状函数替代 SmartArt（python-pptx 无 SmartArt API）——
+   `native_flow`（横向流程条）、`native_chevron_flow`（V 形箭头流程）、
+   `native_hierarchy`（层级/组织图）、`native_fishbone`（鱼骨图，全矢量可编辑）。
+   这些生成的都是可编辑的原生形状，不是图片。
+6. **参考版式**（可选、可自定义）：`cover()`、`section()`、`closing()`。
 
 **设计决策权在你**：可以只用底层能力 + 风格自己设计（产生差异），也可以用参考版式快速起稿。
 不要从头手搓每一行 pptx 代码；需要自定义时在底层函数之上组合，不要改图表函数本身。

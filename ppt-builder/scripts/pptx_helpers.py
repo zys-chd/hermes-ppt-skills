@@ -35,11 +35,18 @@ MARGIN_T = Inches(0.5)
 import platform as _platform
 
 _CN_FONT_BY_PLATFORM = {
-    "Darwin":  ["PingFang SC", "Heiti SC", "STHeiti", "Songti SC"],
-    "Windows": ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"],
+    "Darwin":  ["PingFang SC", "Heiti SC", "Songti SC", "Hiragino Sans GB"],
+    "Windows": ["Microsoft YaHei", "SimHei", "SimSun"],
     "Linux":   ["Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
                 "Noto Sans CJK", "Droid Sans Fallback"],
 }
+
+# 安全字体白名单：这些字体在中英文 Windows/macOS 下都不会缺字（避免乱码）
+SAFE_CN_FONTS = {"PingFang SC", "Microsoft YaHei", "SimHei", "SimSun",
+                 "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+                 "Heiti SC", "Songti SC", "Arial Unicode MS"}
+# 已知跨平台易缺字/易乱码的字体（禁止使用）
+UNSAFE_FONTS = {"Hiragino Sans GB", "Hiragino Sans", "STHeiti", "Droid Sans Fallback"}
 
 
 def _detect_cn_font():
@@ -261,6 +268,9 @@ def _run(run, t, size, bold, color, font):
     run.text = t
     run.font.size = Pt(size)
     run.font.bold = bold
+    # 字体安全校验：不安全字体一律替换为 CN_FONT，防止跨平台乱码
+    if font in UNSAFE_FONTS:
+        font = CN_FONT
     run.font.name = font
     if color is not None:
         run.font.color.rgb = color
@@ -528,3 +538,322 @@ def closing(prs, msg="谢谢", sub="", style=None):
         text(sl, Inches(0), Inches(4.3), SLIDE_W, Inches(0.5),
              [(sub, {"size": 16, "color": s["muted"]})], align=PP_ALIGN.CENTER)
     return sl
+
+
+# ================================================================
+# 原生图表模块（Native Charts）—— 数据可在 PowerPoint 内直接编辑
+# ================================================================
+# 说明：以下函数生成 PowerPoint 原生图表对象（非图片），用户可在 PowerPoint 中
+# 「右键 → 编辑数据」修改数据、换图表类型、应用图表样式。优先使用这些函数；
+# 只有原生图表无法表达时（如热力图、鱼骨图、Weibull 概率图）才用 matplotlib 图片。
+
+from pptx.chart.data import CategoryChartData, XyChartData
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION
+
+
+def _style_native_chart(chart, style, title="", show_legend=False, legend_pos=None,
+                        data_labels=False, num_format='0.00', gap_width=60,
+                        font_size=11, title_size=14):
+    """统一美化原生图表：字体、配色、网格、数据标签。"""
+    chart.has_title = bool(title)
+    if title:
+        tf = chart.chart_title.text_frame
+        tf.text = title
+        for p in tf.paragraphs:
+            for r in p.runs:
+                r.font.size = Pt(title_size)
+                r.font.bold = True
+                r.font.name = CN_FONT
+                r.font.color.rgb = style["primary"]
+
+    chart.has_legend = show_legend
+    if show_legend:
+        chart.legend.position = legend_pos or XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+        chart.legend.font.size = Pt(font_size - 1)
+        chart.legend.font.name = CN_FONT
+
+    # 系列配色
+    series_colors = style.get("series", [])
+    for i, ser in enumerate(chart.series):
+        if i < len(series_colors):
+            try:
+                ser.format.fill.solid()
+                ser.format.fill.fore_color.rgb = hexcolor(series_colors[i])
+            except Exception:
+                pass
+        if data_labels:
+            try:
+                ser.data_labels.show_value = True
+                ser.data_labels.number_format = num_format
+                ser.data_labels.number_format_is_linked = False
+                ser.data_labels.font.size = Pt(font_size - 1)
+                ser.data_labels.font.name = CN_FONT
+                ser.data_labels.font.color.rgb = style["text"]
+                ser.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+            except Exception:
+                pass
+
+    # 坐标轴
+    try:
+        va = chart.value_axis
+        va.has_major_gridlines = True
+        va.major_gridlines.format.line.color.rgb = hexcolor("#D9D9D9")
+        va.major_gridlines.format.line.width = Pt(0.75)
+        va.format.line.color.rgb = hexcolor("#B0B0B0")
+        va.tick_labels.font.size = Pt(font_size - 1)
+        va.tick_labels.font.name = CN_FONT
+        va.tick_labels.font.color.rgb = style["muted"]
+    except Exception:
+        pass
+    try:
+        ca = chart.category_axis
+        ca.tick_labels.font.size = Pt(font_size - 1)
+        ca.tick_labels.font.name = CN_FONT
+        ca.tick_labels.font.color.rgb = style["text"]
+        ca.format.line.color.rgb = hexcolor("#B0B0B0")
+    except Exception:
+        pass
+    try:
+        chart.plots[0].gap_width = gap_width
+    except Exception:
+        pass
+    return chart
+
+
+def native_bar(slide, left, top, width, height, categories, series,
+               style, title="", horizontal=False, show_legend=None,
+               data_labels=True, num_format='0.00', colors=None):
+    """原生柱状/条形图。series: dict{系列名: [值...]} 或 list[(名, [值...])]。"""
+    if isinstance(series, dict):
+        series = list(series.items())
+    cd = CategoryChartData()
+    cd.categories = categories
+    for name, vals in series:
+        cd.add_series(name, vals)
+    ctype = XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED
+    gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
+    st = dict(style)
+    if colors:
+        st["series"] = colors
+    _style_native_chart(gf.chart, st, title,
+                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
+                        data_labels=data_labels, num_format=num_format)
+    return gf
+
+
+def native_line(slide, left, top, width, height, categories, series,
+                style, title="", markers=True, show_legend=None,
+                data_labels=False, num_format='0.00', colors=None):
+    """原生折线图。"""
+    if isinstance(series, dict):
+        series = list(series.items())
+    cd = CategoryChartData()
+    cd.categories = categories
+    for name, vals in series:
+        cd.add_series(name, vals)
+    ctype = XL_CHART_TYPE.LINE_MARKERS if markers else XL_CHART_TYPE.LINE
+    gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
+    st = dict(style)
+    if colors:
+        st["series"] = colors
+    _style_native_chart(gf.chart, st, title,
+                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
+                        data_labels=data_labels, num_format=num_format)
+    # 折线加粗
+    for i, ser in enumerate(gf.chart.series):
+        try:
+            ser.format.line.width = Pt(2.25)
+        except Exception:
+            pass
+    return gf
+
+
+def native_pie(slide, left, top, width, height, categories, values,
+               style, title="", donut=False, data_labels=True, num_format='0.0"%"'):
+    """原生饼图/环形图。"""
+    cd = CategoryChartData()
+    cd.categories = categories
+    cd.add_series("占比", values)
+    ctype = XL_CHART_TYPE.DOUGHNUT if donut else XL_CHART_TYPE.PIE
+    gf = slide.shapes.add_chart(ctype, left, top, width, height, cd)
+    chart = gf.chart
+    _style_native_chart(chart, style, title, show_legend=True,
+                        legend_pos=XL_LEGEND_POSITION.RIGHT)
+    # 逐扇区配色
+    series_colors = style.get("series", [])
+    try:
+        for i, point in enumerate(chart.series[0].points):
+            if i < len(series_colors):
+                point.format.fill.solid()
+                point.format.fill.fore_color.rgb = hexcolor(series_colors[i])
+    except Exception:
+        pass
+    if data_labels:
+        try:
+            chart.plots[0].has_data_labels = True
+            dl = chart.plots[0].data_labels
+            dl.show_percentage = True
+            dl.show_value = False
+            dl.font.size = Pt(10)
+            dl.font.name = CN_FONT
+            dl.number_format = num_format
+            dl.number_format_is_linked = False
+        except Exception:
+            pass
+    return gf
+
+
+def native_scatter(slide, left, top, width, height, series, style, title="",
+                   show_legend=None, num_format='0.00'):
+    """原生散点图。series: dict{名: (xs, ys)} 或 list[(名, (xs, ys))]。"""
+    if isinstance(series, dict):
+        series = list(series.items())
+    cd = XyChartData()
+    for name, (xs, ys) in series:
+        s = cd.add_series(name)
+        for x, y in zip(xs, ys):
+            s.add_data_point(x, y)
+    gf = slide.shapes.add_chart(XL_CHART_TYPE.XY_SCATTER, left, top, width, height, cd)
+    st = dict(style)
+    _style_native_chart(gf.chart, st, title,
+                        show_legend=(len(series) > 1) if show_legend is None else show_legend,
+                        data_labels=False, num_format=num_format)
+    return gf
+
+
+# ================================================================
+# 原生图形模块（Native Shapes）—— 替代 SmartArt，全矢量、可编辑
+# ================================================================
+
+def native_flow(slide, steps, left, top, width, style, box_h=Inches(0.75),
+                numbered=True, gap=Inches(0.45)):
+    """原生横向流程条（替代 SmartArt 流程图）。steps: list[str]。"""
+    n = len(steps)
+    box_w = int((width - gap * (n - 1)) / n)
+    x = left
+    for i, txt in enumerate(steps):
+        # 圆角矩形块
+        shp = rect(slide, x, top, box_w, box_h, style["panel"], round_=True)
+        shp.line.color.rgb = style["primary"]
+        shp.line.width = Pt(1)
+        label = f"{i+1}. {txt}" if numbered else txt
+        text(slide, x, top + int(box_h * 0.22), box_w, int(box_h * 0.6),
+             [(label, {"size": 12, "bold": True, "color": style["primary"]})],
+             align=PP_ALIGN.CENTER)
+        if i < n - 1:
+            # 箭头
+            ax1 = x + box_w
+            arrow = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW,
+                                           ax1 + Inches(0.08), top + int(box_h * 0.3),
+                                           gap - Inches(0.16), int(box_h * 0.4))
+            arrow.fill.solid(); arrow.fill.fore_color.rgb = style["accent"]
+            arrow.line.fill.background()
+        x += box_w + gap
+    return top + box_h
+
+
+def native_chevron_flow(slide, steps, left, top, width, style, box_h=Inches(0.7)):
+    """V 形箭头流程（替代 SmartArt Chevron List）。"""
+    n = len(steps)
+    overlap = Inches(0.22)
+    box_w = int((width + overlap * (n - 1)) / n)
+    x = left
+    for i, txt in enumerate(steps):
+        shp = slide.shapes.add_shape(MSO_SHAPE.CHEVRON, x, top, box_w, box_h)
+        shp.fill.solid()
+        shp.fill.fore_color.rgb = (style["primary"] if i % 2 == 0 else style["accent"])
+        shp.line.fill.background()
+        text(slide, x + int(box_w * 0.18), top + int(box_h * 0.25),
+             int(box_w * 0.64), int(box_h * 0.5),
+             [(txt, {"size": 11, "bold": True, "color": style["white"]})],
+             align=PP_ALIGN.CENTER)
+        x += box_w - overlap
+    return top + box_h
+
+
+def native_hierarchy(slide, root, children, left, top, width, style,
+                     root_h=Inches(0.62), child_h=Inches(0.52), gap=Inches(0.35)):
+    """原生层级图（替代 SmartArt 组织架构图）：根节点 + 子节点。"""
+    # 根节点居中
+    root_w = Inches(2.2)
+    rx = left + int((width - root_w) / 2)
+    r = rect(slide, rx, top, root_w, root_h, style["primary"], round_=True)
+    text(slide, rx, top + Inches(0.14), root_w, Inches(0.4),
+         [(root, {"size": 13, "bold": True, "color": style["white"]})], align=PP_ALIGN.CENTER)
+    # 子节点
+    n = len(children)
+    cw = int((width - gap * (n - 1)) / n) if n else width
+    cy = top + root_h + Inches(0.55)
+    # 竖线（根到横线）
+    mid_x = left + int(width / 2)
+    line(slide, mid_x, top + root_h, mid_x, top + root_h + Inches(0.28), style["muted"], 1.5)
+    # 横线
+    if n > 1:
+        first_cx = left + int(cw / 2)
+        last_cx = left + (n - 1) * (cw + gap) + int(cw / 2)
+        line(slide, first_cx, top + root_h + Inches(0.28), last_cx,
+             top + root_h + Inches(0.28), style["muted"], 1.5)
+    # 子节点 + 竖线
+    for i, c in enumerate(children):
+        cx = left + i * (cw + gap)
+        line(slide, cx + int(cw / 2), top + root_h + Inches(0.28),
+             cx + int(cw / 2), cy, style["muted"], 1.5)
+        rect(slide, cx, cy, cw, child_h, style["panel"], round_=True,
+             line=style["primary"])
+        text(slide, cx, cy + Inches(0.1), cw, Inches(0.35),
+             [(c, {"size": 11, "bold": True, "color": style["primary"]})],
+             align=PP_ALIGN.CENTER)
+    return cy + child_h
+
+
+def native_fishbone(slide, effect, causes, left, top, width, height, style,
+                    spine_color=None):
+    """原生鱼骨图（因果图）—— 全矢量形状绘制。
+    effect: 鱼头（问题）；causes: dict{类别: [原因...]}，如 {"人":[...], "机":[...]}。
+    注：鱼骨图 PPT 无原生图表类型，此处用原生形状绘制，仍可编辑每个文本框。"""
+    spine_color = spine_color or style["primary"]
+    cy = top + int(height / 2)
+    head_w = Inches(1.9)
+    head_h = Inches(0.8)
+    # 主脊线
+    line(slide, left, cy, left + width - head_w, cy, spine_color, 3)
+    # 鱼头
+    head = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                  left + width - head_w, cy - int(head_h / 2),
+                                  head_w, head_h)
+    head.fill.solid(); head.fill.fore_color.rgb = style["accent"]
+    head.line.fill.background()
+    text(slide, left + width - head_w, cy - Inches(0.16), head_w, Inches(0.4),
+         [(effect, {"size": 12, "bold": True, "color": style["white"]})],
+         align=PP_ALIGN.CENTER)
+    # 支骨（上下交替）
+    cat_items = list(causes.items())
+    n = len(cat_items)
+    if not n:
+        return
+    seg = (width - head_w - Inches(1.2)) / max(n, 1)
+    for i, (cat, items) in enumerate(cat_items):
+        bx = left + Inches(0.9) + int(seg * i) + int(seg / 2)
+        up = (i % 2 == 0)
+        if up:
+            y_bone_end = top + Inches(0.35)
+        else:
+            y_bone_end = top + height - Inches(0.35)
+        # 斜支骨
+        line(slide, bx, cy, bx + Inches(0.6), y_bone_end, spine_color, 2)
+        # 类别标签（骨端）
+        cat_w = Inches(0.9)
+        cat_h = Inches(0.36)
+        cr = rect(slide, bx + Inches(0.6) - int(cat_w / 2),
+                  y_bone_end - (cat_h if up else 0), cat_w, cat_h,
+                  style["primary"], round_=True)
+        text(slide, cr.left, cr.top + Inches(0.04), cat_w, Inches(0.28),
+             [(cat, {"size": 10, "bold": True, "color": style["white"]})],
+             align=PP_ALIGN.CENTER)
+        # 原因小字
+        for j, it in enumerate(items[:3]):
+            t = text(slide, cr.left - Inches(0.45),
+                     (y_bone_end + Inches(0.12) * j if up else y_bone_end - Inches(0.22) - Inches(0.12) * j),
+                     Inches(1.8), Inches(0.24),
+                     [(it, {"size": 9, "color": style["text"]})])
